@@ -417,17 +417,26 @@ def evaluate_dmarc(dmarc_records):
     advisories.append("DMARC policy tag p= was not found. Add p=reject, p=quarantine, or p=none.")
     return make_record(False, dmarc_records, advisories)
 
-def evaluate_tls_rpt(tls_rpt_records):
+def evaluate_tls_rpt(tls_rpt_records, tls_rpt_domain):
+    # Only TXT records that are actual TLS-RPT records should be shown here.
+    # Some DNS zones return wildcard TXT records, which can make unrelated SPF/MS records
+    # appear under _smtp._tls.<domain>. Those should not be treated as TLS-RPT.
+    tls_rpt_records = [record for record in tls_rpt_records if record.lower().startswith("v=tlsrptv1")]
+    if not tls_rpt_records:
+        return make_record(
+            False,
+            record_not_found("TLS-RPT", tls_rpt_domain),
+            ["Publish a TLS-RPT record to receive reports about possible deliverability errors to pass this check."],
+            level="warning"
+        )
+
     advisories = semicolon_spacing_advisories(tls_rpt_records)
-    valid_version = any(record.lower().startswith("v=tlsrptv1") for record in tls_rpt_records)
     has_rua = any(extract_tag_value(record, "rua") for record in tls_rpt_records)
 
-    if not valid_version:
-        advisories.append("TLS-RPT record must start with v=TLSRPTv1.")
     if not has_rua:
         advisories.append("TLS-RPT record should include a rua= reporting destination.")
 
-    return make_record(valid_version and has_rua, tls_rpt_records, advisories)
+    return make_record(has_rua, tls_rpt_records, advisories)
 
 def check_tlsa(mx_hosts):
     dane_results = []
@@ -447,27 +456,42 @@ def check_tlsa(mx_hosts):
 
     return make_record(dane_valid, dane_results if dane_results else "No MX host available for DANE check")
 
-def evaluate_mta_sts(domain, mta_sts_txt, dns_ok, https_ok, policy_url, skipped=False, skip_note=None):
+def extract_mta_sts_policy_mode(policy_text):
+    if not policy_text:
+        return None
+    match = re.search(r"^\s*mode\s*:\s*([^\s#]+)", policy_text, re.IGNORECASE | re.MULTILINE)
+    return match.group(1).strip().lower() if match else None
+
+def evaluate_mta_sts(domain, mta_sts_txt, dns_ok, https_ok, policy_url, policy_text=None, skipped=False, skip_note=None):
     if skipped:
         return make_record(True, [skip_note], level="success", skipped=True)
 
     advisories = semicolon_spacing_advisories([mta_sts_txt] if mta_sts_txt else [])
     valid_version = bool(mta_sts_txt and mta_sts_txt.lower().startswith("v=stsv1"))
     has_id = bool(mta_sts_txt and extract_tag_value(mta_sts_txt, "id"))
+    policy_mode = extract_mta_sts_policy_mode(policy_text)
+
     if not valid_version:
         advisories.append("MTA-STS TXT record must start with v=STSv1.")
     if not has_id:
         advisories.append("MTA-STS TXT record should include an id= value.")
     if not https_ok:
         advisories.append("MTA-STS policy file could not be reached over HTTPS.")
+    elif policy_mode != "enforce":
+        advisories.append("Use enforce as the MTA-STS policy mode to pass this check.")
 
     values = []
     if mta_sts_txt:
         values.append(mta_sts_txt)
     values.append(f"DNS: {dns_ok}")
     values.append(f"HTTPS: {https_ok}")
+    if https_ok:
+        values.append(f"Policy mode: {policy_mode or 'not found'}")
     values.append(policy_url)
-    return make_record(dns_ok and https_ok and valid_version and has_id, values, advisories)
+
+    base_status = dns_ok and https_ok and valid_version and has_id
+    level = "warning" if base_status and policy_mode != "enforce" else None
+    return make_record(base_status, values, advisories, level=level)
 
 @app.route(route="lookup")
 def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
@@ -554,7 +578,7 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
         tls_rpt_domain = "_smtp._tls." + domain
         tls_rpt_records = dns.resolver.resolve(tls_rpt_domain, 'TXT')
         tls_rpt_txt = txt_record_values(tls_rpt_records)
-        results['TLS-RPT'] = evaluate_tls_rpt(tls_rpt_txt)
+        results['TLS-RPT'] = evaluate_tls_rpt(tls_rpt_txt, tls_rpt_domain)
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
         results['TLS-RPT'] = make_record(False, record_not_found("TLS-RPT", "_smtp._tls." + domain), ["Publish a TLS-RPT record to receive reports about possible deliverability errors to pass this check."], level="warning")
     except Exception as e:
@@ -595,20 +619,26 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
 
         if mta_sts_dns_ok is not None:
             policy_url = f"https://mta-sts.{domain}/.well-known/mta-sts.txt"
+            mta_sts_policy_text = None
             try:
                 fallback_url = f"https://{domain}/.well-known/mta-sts.txt"
                 r = requests.get(policy_url, timeout=5)
                 mta_sts_http_ok = r.status_code == 200
-                if not mta_sts_http_ok:
+                if mta_sts_http_ok:
+                    mta_sts_policy_text = r.text
+                else:
                     try:
                         r2 = requests.get(fallback_url, timeout=5)
                         mta_sts_http_ok = r2.status_code == 200
+                        if mta_sts_http_ok:
+                            mta_sts_policy_text = r2.text
+                            policy_url = fallback_url
                     except:
                         mta_sts_http_ok = False
             except:
                 mta_sts_http_ok = False
 
-            results['MTA-STS'] = evaluate_mta_sts(domain, mta_sts_txt_value, mta_sts_dns_ok, mta_sts_http_ok, policy_url)
+            results['MTA-STS'] = evaluate_mta_sts(domain, mta_sts_txt_value, mta_sts_dns_ok, mta_sts_http_ok, policy_url, mta_sts_policy_text)
     except StopIteration:
         pass
     except Exception as e:
