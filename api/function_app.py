@@ -12,6 +12,7 @@ import re
 import html
 import os
 import ipaddress
+import uuid
 from datetime import datetime, timezone
 
 # Function settings
@@ -179,6 +180,84 @@ def check_mx_blacklists(mx_hosts):
         values.append(f"{mx_host}\n{summary['line']}")
 
     return values, advisories, total_listed
+
+
+
+def normalize_txt_value(value):
+    return str(value).strip().strip('"').lower()
+
+def same_txt_record_set(left, right):
+    return sorted(normalize_txt_value(value) for value in left) == sorted(normalize_txt_value(value) for value in right)
+
+def looks_like_wildcard_txt_response(record_name, txt_values):
+    # DNS wildcard responses are synthesized as if they exist on the queried name.
+    # To avoid accepting wildcard TXT records as DMARC/TLS-RPT/MTA-STS, query a random
+    # sibling below the same parent. If it returns the exact same TXT set, the original
+    # response is most likely wildcard-generated and not a dedicated scoped record.
+    if not txt_values:
+        return False
+
+    labels = clean_dns_name(record_name).split('.')
+    if len(labels) < 2:
+        return False
+
+    parent = '.'.join(labels[1:])
+    probe_name = f"_dnstool_probe_{uuid.uuid4().hex[:12]}.{parent}"
+    try:
+        probe_records = dns.resolver.resolve(probe_name, 'TXT', lifetime=2)
+        probe_values = txt_record_values(probe_records)
+        return same_txt_record_set(txt_values, probe_values)
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+        return False
+    except Exception:
+        # If the wildcard probe cannot be completed, do not block the real result.
+        return False
+
+def resolve_scoped_txt(record_name, expected_prefix):
+    values = txt_record_values(dns.resolver.resolve(record_name, 'TXT'))
+    prefix = expected_prefix.lower()
+    valid_records = [value for value in values if value.strip().lower().startswith(prefix)]
+    unexpected_records = [value for value in values if not value.strip().lower().startswith(prefix)]
+    wildcard_shadowed = looks_like_wildcard_txt_response(record_name, values)
+
+    if wildcard_shadowed:
+        # Treat wildcard-generated scoped security records as missing. A domain should
+        # publish a dedicated TXT record on the exact required name.
+        valid_records = []
+
+    return {
+        "record_name": record_name,
+        "expected_prefix": expected_prefix,
+        "all_records": values,
+        "valid_records": valid_records,
+        "unexpected_records": unexpected_records,
+        "wildcard_shadowed": wildcard_shadowed,
+    }
+
+def scoped_txt_advisories(record_type, scoped, base_advisory=None):
+    record_name = scoped["record_name"]
+    expected_prefix = scoped["expected_prefix"]
+    advisories = []
+
+    if base_advisory:
+        advisories.append(base_advisory)
+
+    if scoped.get("wildcard_shadowed"):
+        advisories.append(
+            f"TXT records returned for {record_name} appear to come from a wildcard response. "
+            f"Publish a dedicated {record_type} TXT record on {record_name} that starts with {expected_prefix}."
+        )
+    elif scoped.get("all_records") and not scoped.get("valid_records"):
+        advisories.append(
+            f"TXT record(s) found on {record_name}, but none start with {expected_prefix}."
+        )
+
+    if scoped.get("valid_records") and scoped.get("unexpected_records"):
+        advisories.append(
+            f"Unrelated TXT record(s) were also found on {record_name}. Keep this name dedicated to {record_type} records."
+        )
+
+    return advisories
 
 def record_not_found(record_type, domain):
     return f"{record_type} record not found: {domain}"
@@ -397,11 +476,13 @@ def evaluate_spf(spf_records):
     advisories.append("SPF does not end with an all mechanism. Add -all for a strict policy.")
     return make_record(False, spf_records, advisories)
 
-def evaluate_dmarc(dmarc_records):
-    advisories = semicolon_spacing_advisories(dmarc_records)
+def evaluate_dmarc(dmarc_records, extra_advisories=None):
+    advisories = (extra_advisories or []) + semicolon_spacing_advisories(dmarc_records)
+    if len(dmarc_records) > 1:
+        advisories.append("Multiple DMARC records found. Publish exactly one DMARC TXT record on _dmarc.")
     policy = None
     for record in dmarc_records:
-        if record.lower().startswith("v=dmarc1"):
+        if record.strip().lower().startswith("v=dmarc1"):
             policy = extract_tag_value(record, "p")
             break
 
@@ -417,20 +498,18 @@ def evaluate_dmarc(dmarc_records):
     advisories.append("DMARC policy tag p= was not found. Add p=reject, p=quarantine, or p=none.")
     return make_record(False, dmarc_records, advisories)
 
-def evaluate_tls_rpt(tls_rpt_records, tls_rpt_domain):
-    # Only TXT records that are actual TLS-RPT records should be shown here.
-    # Some DNS zones return wildcard TXT records, which can make unrelated SPF/MS records
-    # appear under _smtp._tls.<domain>. Those should not be treated as TLS-RPT.
-    tls_rpt_records = [record for record in tls_rpt_records if record.lower().startswith("v=tlsrptv1")]
+def evaluate_tls_rpt(tls_rpt_records, tls_rpt_domain, extra_advisories=None):
     if not tls_rpt_records:
         return make_record(
             False,
             record_not_found("TLS-RPT", tls_rpt_domain),
-            ["Publish a TLS-RPT record to receive reports about possible deliverability errors to pass this check."],
+            extra_advisories or ["Publish a TLS-RPT record to receive reports about possible deliverability errors to pass this check."],
             level="warning"
         )
 
-    advisories = semicolon_spacing_advisories(tls_rpt_records)
+    advisories = (extra_advisories or []) + semicolon_spacing_advisories(tls_rpt_records)
+    if len(tls_rpt_records) > 1:
+        advisories.append("Multiple TLS-RPT records found. Publish exactly one TLS-RPT TXT record on _smtp._tls.")
     has_rua = any(extract_tag_value(record, "rua") for record in tls_rpt_records)
 
     if not has_rua:
@@ -462,11 +541,11 @@ def extract_mta_sts_policy_mode(policy_text):
     match = re.search(r"^\s*mode\s*:\s*([^\s#]+)", policy_text, re.IGNORECASE | re.MULTILINE)
     return match.group(1).strip().lower() if match else None
 
-def evaluate_mta_sts(domain, mta_sts_txt, dns_ok, https_ok, policy_url, policy_text=None, skipped=False, skip_note=None):
+def evaluate_mta_sts(domain, mta_sts_txt, dns_ok, https_ok, policy_url, policy_text=None, skipped=False, skip_note=None, extra_advisories=None):
     if skipped:
         return make_record(True, [skip_note], level="success", skipped=True)
 
-    advisories = semicolon_spacing_advisories([mta_sts_txt] if mta_sts_txt else [])
+    advisories = (extra_advisories or []) + semicolon_spacing_advisories([mta_sts_txt] if mta_sts_txt else [])
     valid_version = bool(mta_sts_txt and mta_sts_txt.lower().startswith("v=stsv1"))
     has_id = bool(mta_sts_txt and extract_tag_value(mta_sts_txt, "id"))
     policy_mode = extract_mta_sts_policy_mode(policy_text)
@@ -562,25 +641,35 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
         results['DKIM'] = make_record(False, str(e))
 
     # DMARC lookup
+    dmarc_domain = "_dmarc." + domain
     try:
-        dmarc_domain = "_dmarc." + domain
-        dmarc_records = dns.resolver.resolve(dmarc_domain, 'TXT')
-        dmarc_txt = txt_record_values(dmarc_records)
-
-        results['DMARC'] = evaluate_dmarc(dmarc_txt)
+        dmarc_scoped = resolve_scoped_txt(dmarc_domain, "v=DMARC1")
+        dmarc_advisories = scoped_txt_advisories(
+            "DMARC",
+            dmarc_scoped,
+            "Publish a DMARC record with p=reject for the strongest protection." if not dmarc_scoped["valid_records"] else None
+        )
+        if dmarc_scoped["valid_records"]:
+            results['DMARC'] = evaluate_dmarc(dmarc_scoped["valid_records"], dmarc_advisories)
+        else:
+            results['DMARC'] = make_record(False, record_not_found("DMARC", dmarc_domain), dmarc_advisories)
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
         results['DMARC'] = make_record(False, record_not_found("DMARC", dmarc_domain), ["Publish a DMARC record with p=reject for the strongest protection."])
     except Exception as e:
         results['DMARC'] = make_record(False, str(e))
 
     # TLS-RPT lookup
+    tls_rpt_domain = "_smtp._tls." + domain
     try:
-        tls_rpt_domain = "_smtp._tls." + domain
-        tls_rpt_records = dns.resolver.resolve(tls_rpt_domain, 'TXT')
-        tls_rpt_txt = txt_record_values(tls_rpt_records)
-        results['TLS-RPT'] = evaluate_tls_rpt(tls_rpt_txt, tls_rpt_domain)
+        tls_rpt_scoped = resolve_scoped_txt(tls_rpt_domain, "v=TLSRPTv1")
+        tls_rpt_advisories = scoped_txt_advisories(
+            "TLS-RPT",
+            tls_rpt_scoped,
+            "Publish a TLS-RPT record to receive reports about possible deliverability errors to pass this check." if not tls_rpt_scoped["valid_records"] else None
+        )
+        results['TLS-RPT'] = evaluate_tls_rpt(tls_rpt_scoped["valid_records"], tls_rpt_domain, tls_rpt_advisories)
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-        results['TLS-RPT'] = make_record(False, record_not_found("TLS-RPT", "_smtp._tls." + domain), ["Publish a TLS-RPT record to receive reports about possible deliverability errors to pass this check."], level="warning")
+        results['TLS-RPT'] = make_record(False, record_not_found("TLS-RPT", tls_rpt_domain), ["Publish a TLS-RPT record to receive reports about possible deliverability errors to pass this check."], level="warning")
     except Exception as e:
         results['TLS-RPT'] = make_record(False, str(e))
 
@@ -609,9 +698,22 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
 
         mta_sts_domain = "_mta-sts." + domain
         try:
-            mta_sts_records = dns.resolver.resolve(mta_sts_domain, 'TXT')
-            mta_sts_dns_ok = True
-            mta_sts_txt_value = ''.join([b.decode('utf-8') for b in mta_sts_records[0].strings])  # Get the TXT record value
+            mta_sts_scoped = resolve_scoped_txt(mta_sts_domain, "v=STSv1")
+            mta_sts_advisories = scoped_txt_advisories(
+                "MTA-STS",
+                mta_sts_scoped,
+                "Publish a MTA-STS record and policy to pass this check." if not mta_sts_scoped["valid_records"] else None
+            )
+            if len(mta_sts_scoped["valid_records"]) > 1:
+                mta_sts_advisories.append("Multiple MTA-STS TXT records found. Publish exactly one MTA-STS TXT record on _mta-sts.")
+
+            if mta_sts_scoped["valid_records"]:
+                mta_sts_dns_ok = True
+                mta_sts_txt_value = mta_sts_scoped["valid_records"][0]
+            else:
+                mta_sts_dns_ok = False
+                results['MTA-STS'] = make_record(False, record_not_found("MTA-STS", mta_sts_domain), mta_sts_advisories, level="warning")
+                mta_sts_dns_ok = None  # Stop further processing
         except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
             mta_sts_dns_ok = False
             results['MTA-STS'] = make_record(False, record_not_found("MTA-STS", mta_sts_domain), ["Publish a MTA-STS record and policy to pass this check."], level="warning")
@@ -638,7 +740,7 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
             except:
                 mta_sts_http_ok = False
 
-            results['MTA-STS'] = evaluate_mta_sts(domain, mta_sts_txt_value, mta_sts_dns_ok, mta_sts_http_ok, policy_url, mta_sts_policy_text)
+            results['MTA-STS'] = evaluate_mta_sts(domain, mta_sts_txt_value, mta_sts_dns_ok, mta_sts_http_ok, policy_url, mta_sts_policy_text, extra_advisories=mta_sts_advisories)
     except StopIteration:
         pass
     except Exception as e:
