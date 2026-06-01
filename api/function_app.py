@@ -162,29 +162,23 @@ def build_blacklist_summary(checks):
 
 def check_mx_blacklists(mx_hosts):
     zones = get_dnsbl_zones()
-    details = []
+    values = []
     advisories = []
     total_listed = 0
 
     for mx_host in mx_hosts:
         ips = resolve_mx_host_ips(mx_host)
         if not ips:
-            details.append({
-                "text": mx_host,
-                "details": ["Blacklist check: unavailable, MX host IP address could not be resolved"],
-            })
+            values.append(f"{mx_host}\nBlacklist check: unavailable, MX host IP address could not be resolved")
             continue
 
         checks = [check_ip_against_dnsbls(ip, zones) for ip in ips]
         summary = build_blacklist_summary(checks)
         total_listed += summary["listed_count"]
         advisories.extend(summary["advisories"])
-        details.append({
-            "text": mx_host,
-            "details": [summary["line"]],
-        })
+        values.append(f"{mx_host}\n{summary['line']}")
 
-    return details, advisories, total_listed
+    return values, advisories, total_listed
 
 def record_not_found(record_type, domain):
     return f"{record_type} record not found: {domain}"

@@ -344,11 +344,37 @@ function createValueNode(value) {
         const link = document.createElement("a");
         link.href = text;
         link.target = "_blank";
-        link.rel = "noopener";
+        link.rel = "noopener noreferrer";
         link.textContent = text;
         return link;
     }
     return document.createTextNode(text);
+}
+
+function normalizeRecordValueLines(value) {
+    if (value && typeof value === "object") {
+        const lines = [];
+        if (value.text !== undefined && value.text !== null) lines.push(String(value.text));
+        if (Array.isArray(value.details)) {
+            value.details.forEach((detail) => lines.push(String(detail ?? "")));
+        }
+        return lines.length ? lines : [JSON.stringify(value)];
+    }
+
+    return String(value ?? "")
+        .split(/\r?\n/)
+        .map((line) => line.trimEnd());
+}
+
+function appendRecordValueLines(listItem, value) {
+    const lines = normalizeRecordValueLines(value);
+
+    lines.forEach((line, index) => {
+        const lineElement = document.createElement("div");
+        if (index > 0) lineElement.className = "record-value-detail";
+        lineElement.appendChild(createValueNode(line));
+        listItem.appendChild(lineElement);
+    });
 }
 
 function appendRecordDetails(cell, record) {
@@ -358,24 +384,7 @@ function appendRecordDetails(cell, record) {
 
     values.forEach((val) => {
         const li = document.createElement("li");
-
-        if (val && typeof val === "object") {
-            const mainLine = document.createElement("div");
-            mainLine.appendChild(createValueNode(val.text ?? ""));
-            li.appendChild(mainLine);
-
-            if (Array.isArray(val.details)) {
-                val.details.forEach((detail) => {
-                    const detailLine = document.createElement("div");
-                    detailLine.className = "record-value-detail";
-                    detailLine.appendChild(createValueNode(detail));
-                    li.appendChild(detailLine);
-                });
-            }
-        } else {
-            li.appendChild(createValueNode(val));
-        }
-
+        appendRecordValueLines(li, val);
         list.appendChild(li);
     });
 
