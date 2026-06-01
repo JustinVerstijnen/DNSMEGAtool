@@ -24,11 +24,10 @@ The main features of this tool are:
 	- Try the domain _justinverstijnen.nl_ for a demo
 - WHOIS information about your domain
 - Displays actual NS servers
+- Gives advisories about your current configured records to improve security and readability
 
 ### What the tool doesn't do
-
-- Correct your incorrect configured records
-- Cache or save the information in any way, refreshing means a new lookup
+- Cache, send or save the information in any way, refreshing the page means information gone
 
 ## Hosting
 
