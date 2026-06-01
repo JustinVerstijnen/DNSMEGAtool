@@ -345,18 +345,16 @@ function createValueNode(value) {
 
 function appendRecordDetails(cell, record) {
     const value = record?.value;
-    if (Array.isArray(value)) {
-        const list = document.createElement("ul");
-        value.forEach((val) => {
-            const li = document.createElement("li");
-            li.appendChild(createValueNode(val));
-            list.appendChild(li);
-        });
-        cell.appendChild(list);
-    } else {
-        cell.appendChild(createValueNode(value));
-    }
+    const values = Array.isArray(value) ? value : [value];
+    const list = document.createElement("ul");
 
+    values.forEach((val) => {
+        const li = document.createElement("li");
+        li.appendChild(createValueNode(val));
+        list.appendChild(li);
+    });
+
+    cell.appendChild(list);
 }
 
 function formatWhoisLabel(key) {
