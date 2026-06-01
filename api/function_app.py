@@ -10,10 +10,181 @@ import socket
 import ssl
 import re
 import html
+import os
+import ipaddress
 from datetime import datetime, timezone
 
 # Function settings
 app = func.FunctionApp()
+
+DEFAULT_DNSBL_ZONES = [
+    "zen.spamhaus.org",
+    "bl.spamcop.net",
+    "b.barracudacentral.org",
+    "psbl.surriel.com",
+    "spam.spamrats.com",
+    "rbl.interserver.net",
+    "bl.mailspike.net",
+]
+
+def get_dnsbl_zones():
+    # Comma-separated override for deployments that want a different DNSBL set.
+    configured = os.environ.get("DNSBL_ZONES", "").strip()
+    if configured:
+        zones = [zone.strip().strip(".").lower() for zone in configured.split(",") if zone.strip()]
+        return zones or DEFAULT_DNSBL_ZONES
+    return DEFAULT_DNSBL_ZONES
+
+def reverse_ipv4(ip):
+    return ".".join(reversed(ip.split(".")))
+
+def reverse_ipv6(ip):
+    expanded = ipaddress.ip_address(ip).exploded.replace(":", "")
+    return ".".join(reversed(expanded))
+
+def make_dnsbl_query(ip, zone):
+    parsed = ipaddress.ip_address(ip)
+    if parsed.version == 4:
+        return f"{reverse_ipv4(ip)}.{zone}"
+    return f"{reverse_ipv6(ip)}.{zone}"
+
+def is_dnsbl_access_blocked(answers):
+    # Some DNSBL providers return 127.255.255.x when the resolver is blocked or not authorized.
+    # Do not count those responses as a real blacklist listing.
+    return any(str(answer).startswith("127.255.255.") for answer in answers)
+
+def resolve_mx_host_ips(mx_host):
+    try:
+        max_ips = max(1, int(os.environ.get("DNSBL_MAX_IPS_PER_MX", "2")))
+    except ValueError:
+        max_ips = 2
+    ips = []
+    for record_type in ("A", "AAAA"):
+        try:
+            records = dns.resolver.resolve(mx_host, record_type, lifetime=3)
+            for record in records:
+                ip = str(record)
+                if ip not in ips:
+                    ips.append(ip)
+                    if len(ips) >= max_ips:
+                        return ips
+        except Exception:
+            continue
+    return ips
+
+def check_ip_against_dnsbls(ip, zones):
+    listed_zones = []
+    checked_zones = 0
+    unavailable_zones = []
+
+    resolver = dns.resolver.Resolver()
+    resolver.timeout = 0.6
+    resolver.lifetime = 0.8
+
+    for zone in zones:
+        query = make_dnsbl_query(ip, zone)
+        try:
+            answers = resolver.resolve(query, "A")
+            if is_dnsbl_access_blocked(answers):
+                unavailable_zones.append(zone)
+                continue
+            checked_zones += 1
+            listed_zones.append(zone)
+        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+            checked_zones += 1
+        except (dns.exception.Timeout, dns.resolver.NoNameservers):
+            unavailable_zones.append(zone)
+        except Exception:
+            unavailable_zones.append(zone)
+
+    return {
+        "ip": ip,
+        "listed_zones": listed_zones,
+        "checked_zones": checked_zones,
+        "unavailable_zones": unavailable_zones,
+    }
+
+def build_blacklist_summary(checks):
+    listed_by_zone = {}
+    checked_zones = set()
+    unavailable_zones = set()
+    checked_ips = []
+
+    for check in checks:
+        checked_ips.append(check["ip"])
+        for zone in check["listed_zones"]:
+            listed_by_zone.setdefault(zone, set()).add(check["ip"])
+        for zone in check["unavailable_zones"]:
+            unavailable_zones.add(zone)
+
+    # A zone counts as checked when at least one IP received a definite listed/not-listed response.
+    zones = get_dnsbl_zones()
+    for zone in zones:
+        for check in checks:
+            if zone not in check["unavailable_zones"]:
+                checked_zones.add(zone)
+                break
+
+    listed_count = len(listed_by_zone)
+    checked_count = len(checked_zones)
+    ip_count = len(checked_ips)
+
+    if checked_count == 0:
+        return {
+            "listed_count": 0,
+            "checked_count": 0,
+            "listed_by_zone": listed_by_zone,
+            "line": "Blacklist check: unavailable",
+            "advisories": [],
+        }
+
+    line = f"Blacklist matches: {listed_count}/{checked_count} checked"
+    if ip_count > 1:
+        line += f" across {ip_count} IP addresses"
+    if listed_count > 0:
+        listed_names = ", ".join(sorted(listed_by_zone.keys()))
+        line += f" ({listed_names})"
+
+    advisories = []
+    if listed_count > 0:
+        details = []
+        for zone, ips in sorted(listed_by_zone.items()):
+            details.append(f"{zone}: {', '.join(sorted(ips))}")
+        advisories.append("MX server is listed on one or more DNS blacklists: " + "; ".join(details))
+
+    return {
+        "listed_count": listed_count,
+        "checked_count": checked_count,
+        "listed_by_zone": listed_by_zone,
+        "line": line,
+        "advisories": advisories,
+    }
+
+def check_mx_blacklists(mx_hosts):
+    zones = get_dnsbl_zones()
+    details = []
+    advisories = []
+    total_listed = 0
+
+    for mx_host in mx_hosts:
+        ips = resolve_mx_host_ips(mx_host)
+        if not ips:
+            details.append({
+                "text": mx_host,
+                "details": ["Blacklist check: unavailable, MX host IP address could not be resolved"],
+            })
+            continue
+
+        checks = [check_ip_against_dnsbls(ip, zones) for ip in ips]
+        summary = build_blacklist_summary(checks)
+        total_listed += summary["listed_count"]
+        advisories.extend(summary["advisories"])
+        details.append({
+            "text": mx_host,
+            "details": [summary["line"]],
+        })
+
+    return details, advisories, total_listed
 
 def record_not_found(record_type, domain):
     return f"{record_type} record not found: {domain}"
@@ -319,7 +490,13 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
         mx_records = sorted(mx_records, key=lambda r: r.preference)
         mx_hosts = [clean_dns_name(r.exchange) for r in mx_records]
         mx_valid = len(mx_records) > 0
-        results['MX'] = make_record(mx_valid, mx_hosts)
+        mx_values, mx_blacklist_advisories, mx_blacklist_total = check_mx_blacklists(mx_hosts)
+        results['MX'] = make_record(
+            mx_valid,
+            mx_values if mx_values else mx_hosts,
+            mx_blacklist_advisories,
+            level="warning" if mx_blacklist_total > 0 else None
+        )
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
         results['MX'] = make_record(False, record_not_found("MX", domain))
     except Exception as e:

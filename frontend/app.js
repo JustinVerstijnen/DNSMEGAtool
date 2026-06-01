@@ -317,7 +317,15 @@ function createStatusIcon(record) {
 }
 
 function formatValueForTitle(value) {
-    if (Array.isArray(value)) return value.join("\n");
+    if (Array.isArray(value)) return value.map(formatValueForTitle).join("\n");
+    if (value && typeof value === "object") {
+        const lines = [];
+        if (value.text !== undefined && value.text !== null) lines.push(String(value.text));
+        if (Array.isArray(value.details)) {
+            value.details.forEach((detail) => lines.push(String(detail ?? "")));
+        }
+        return lines.join("\n");
+    }
     return (value ?? "").toString();
 }
 
@@ -350,7 +358,24 @@ function appendRecordDetails(cell, record) {
 
     values.forEach((val) => {
         const li = document.createElement("li");
-        li.appendChild(createValueNode(val));
+
+        if (val && typeof val === "object") {
+            const mainLine = document.createElement("div");
+            mainLine.appendChild(createValueNode(val.text ?? ""));
+            li.appendChild(mainLine);
+
+            if (Array.isArray(val.details)) {
+                val.details.forEach((detail) => {
+                    const detailLine = document.createElement("div");
+                    detailLine.className = "record-value-detail";
+                    detailLine.appendChild(createValueNode(detail));
+                    li.appendChild(detailLine);
+                });
+            }
+        } else {
+            li.appendChild(createValueNode(val));
+        }
+
         list.appendChild(li);
     });
 
