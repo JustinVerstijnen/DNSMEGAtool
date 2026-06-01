@@ -172,8 +172,23 @@ th, td {
     width: 76px;
 }
 
+#resultTable th:nth-child(1),
+#resultTable td:nth-child(1) {
+    text-align: left;
+}
+
+#resultTable th:nth-child(2) {
+    text-align: center;
+}
+
 #resultTable td:nth-child(2) {
+    text-align: left;
     overflow-wrap: anywhere;
+}
+
+#resultTable th:nth-child(3),
+#resultTable td:nth-child(3) {
+    text-align: right;
 }
 
 th {
@@ -182,6 +197,10 @@ th {
 
 td:has(.status-icon) {
     text-align: center;
+}
+
+#resultTable td:has(.status-icon) {
+    text-align: right;
 }
 
 .row-success {
