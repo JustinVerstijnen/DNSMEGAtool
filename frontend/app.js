@@ -19,6 +19,7 @@ const recordDocumentationLinks = {
     "DKIM": "https://justinverstijnen.nl/enhance-email-security-with-spf-dkim-dmarc/#dkim---domain-keys-identified-mail",
     "DMARC": "https://justinverstijnen.nl/enhance-email-security-with-spf-dkim-dmarc/#dmarc---domain-based-message-authentication-reporting-and-conformance",
     "TLS-RPT": "https://justinverstijnen.nl/what-is-tls-rpt/",
+    "DNSSEC": "https://justinverstijnen.nl/configure-dnssec-and-smtp-dane-with-exchange-online-microsoft-365/#domain-name-system-security-extensions-dnssec",
     "DANE": "https://justinverstijnen.nl/configure-dnssec-and-smtp-dane-with-exchange-online-microsoft-365/",
     "MTA-STS": "https://justinverstijnen.nl/what-is-mta-sts-and-how-to-protect-your-email-flow/"
 };
@@ -241,7 +242,17 @@ function createRecordTypeLabel(type) {
     const wrapper = document.createElement("span");
     wrapper.className = "record-type tooltip";
 
-    const label = document.createElement("span");
+    const documentationLink = recordDocumentationLinks[type];
+    let label;
+    if (documentationLink) {
+        label = document.createElement("a");
+        label.href = documentationLink;
+        label.target = "_blank";
+        label.rel = "noopener noreferrer";
+        label.className = "record-type-link";
+    } else {
+        label = document.createElement("span");
+    }
     label.textContent = type;
     wrapper.appendChild(label);
 
@@ -253,12 +264,11 @@ function createRecordTypeLabel(type) {
         descriptionText.textContent = description;
         tooltip.appendChild(descriptionText);
 
-        const documentationLink = recordDocumentationLinks[type];
         if (documentationLink) {
             const link = document.createElement("a");
             link.href = documentationLink;
             link.target = "_blank";
-            link.rel = "noopener";
+            link.rel = "noopener noreferrer";
             link.textContent = "📖 Read more";
             tooltip.appendChild(link);
         }

@@ -96,7 +96,23 @@
       opacity:0;
       pointer-events:none;
       visibility:hidden;
-      transition:opacity .75s ease, visibility 0s linear .75s
+      transition:opacity .2s ease .25s, visibility 0s linear .45s
+    }
+    .record-type-link,
+    .record-type-link:visited,
+    .record-type-link:hover,
+    .record-type-link:active{
+      color:inherit;
+      font-weight:inherit;
+      text-decoration:none
+    }
+    .record-type .record-tooltip-text::before{
+      content:"";
+      position:absolute;
+      top:0;
+      bottom:0;
+      left:-14px;
+      width:14px
     }
     .record-tooltip-text a{
       display:block;

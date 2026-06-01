@@ -300,7 +300,7 @@ ul {
     opacity: 0;
     pointer-events: none;
     visibility: hidden;
-    transition: opacity 0.75s ease, visibility 0s linear 0.75s;
+    transition: opacity 0.2s ease 0.25s, visibility 0s linear 0.45s;
 }
 
 .status-success .tooltip-text {
@@ -329,6 +329,24 @@ ul {
     max-width: min(300px, calc(100vw - 48px));
     line-height: 1.45;
     white-space: normal;
+}
+
+.record-type-link,
+.record-type-link:visited,
+.record-type-link:hover,
+.record-type-link:active {
+    color: inherit;
+    font-weight: inherit;
+    text-decoration: none;
+}
+
+.record-type .record-tooltip-text::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -14px;
+    width: 14px;
 }
 
 .record-tooltip-text a {

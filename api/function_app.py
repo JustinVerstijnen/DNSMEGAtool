@@ -385,7 +385,7 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
         tls_rpt_txt = txt_record_values(tls_rpt_records)
         results['TLS-RPT'] = evaluate_tls_rpt(tls_rpt_txt)
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-        results['TLS-RPT'] = make_record(False, record_not_found("TLS-RPT", "_smtp._tls." + domain), ["Publish a TLS-RPT record with v=TLSRPTv1 and a rua= reporting destination."])
+        results['TLS-RPT'] = make_record(False, record_not_found("TLS-RPT", "_smtp._tls." + domain), ["Publish a TLS-RPT record to receive reports about possible deliverability errors to pass this check."], level="warning")
     except Exception as e:
         results['TLS-RPT'] = make_record(False, str(e))
 
@@ -419,7 +419,7 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
             mta_sts_txt_value = ''.join([b.decode('utf-8') for b in mta_sts_records[0].strings])  # Get the TXT record value
         except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
             mta_sts_dns_ok = False
-            results['MTA-STS'] = make_record(False, record_not_found("MTA-STS", mta_sts_domain), ["Publish an MTA-STS TXT record with v=STSv1 and an id= value."])
+            results['MTA-STS'] = make_record(False, record_not_found("MTA-STS", mta_sts_domain), ["Publish a MTA-STS record and policy to pass this check."], level="warning")
             mta_sts_dns_ok = None  # Stop further processing
 
         if mta_sts_dns_ok is not None:
