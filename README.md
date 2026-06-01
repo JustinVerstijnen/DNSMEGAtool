@@ -16,6 +16,7 @@ The main features of this tool are:
 	- DNSSEC
 	- DANE
 	- MX SSL certificate validity
+- CHeck if MX record is on a active blacklist, impacting email deliverability
 - Checks the actual configuration
 - Shows how many days are left on the MX SSL certificate
 - Shows advisories for weak or inconsistent mail security configuration
