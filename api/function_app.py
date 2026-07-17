@@ -265,6 +265,180 @@ def record_not_found(record_type, domain):
 def txt_record_values(records):
     return ["".join([b.decode("utf-8") for b in r.strings]) for r in records]
 
+DOMAIN_DETAIL_RECORD_TYPES = ["A", "AAAA", "CNAME", "TXT", "NS", "MX", "SOA", "CAA", "DS", "DNSKEY"]
+
+DOMAIN_DETAIL_DESCRIPTIONS = {
+    "A": "Maps the domain name to IPv4 addresses.",
+    "AAAA": "Maps the domain name to IPv6 addresses.",
+    "CNAME": "Aliases this name to another canonical hostname.",
+    "TXT": "Stores text values used for verification, policy, and service configuration.",
+    "SPF": "Shows SPF policies found in TXT records, listing which senders may send mail for this domain.",
+    "NS": "Lists the authoritative name servers for this domain.",
+    "MX": "Lists mail servers that receive email for this domain, ordered by priority.",
+    "SOA": "Shows the start-of-authority data for this DNS zone.",
+    "CAA": "Controls which certificate authorities may issue TLS certificates for this domain.",
+    "DS": "Delegation signer records connect this domain to DNSSEC validation in the parent zone.",
+    "DNSKEY": "Public DNSSEC keys used to validate signed DNS records in this zone.",
+}
+
+def decode_dns_text(value):
+    if isinstance(value, bytes):
+        return value.decode("utf-8", "replace")
+    return str(value)
+
+def format_soa_email(value):
+    email = clean_dns_name(value)
+    if "." not in email:
+        return email
+    local, domain = email.split(".", 1)
+    return f"{local}@{domain}"
+
+def format_duration(seconds):
+    try:
+        seconds = int(seconds)
+    except (TypeError, ValueError):
+        return None
+
+    if seconds <= 0:
+        return "0s"
+
+    units = [
+        ("d", 86400),
+        ("h", 3600),
+        ("m", 60),
+        ("s", 1),
+    ]
+    parts = []
+    remaining = seconds
+    for label, size in units:
+        amount, remaining = divmod(remaining, size)
+        if amount:
+            parts.append(f"{amount}{label}")
+        if len(parts) == 2:
+            break
+    return " ".join(parts)
+
+def serialize_domain_detail_record(record, record_type):
+    if record_type in ("A", "AAAA"):
+        address = str(record)
+        return {
+            "value": address,
+            "fields": {"Address": address},
+        }
+
+    if record_type == "CNAME":
+        target = clean_dns_name(record.target)
+        return {
+            "value": target,
+            "fields": {"Canonical name": target},
+        }
+
+    if record_type == "TXT":
+        value = "".join(decode_dns_text(part) for part in record.strings)
+        return {
+            "value": value,
+            "fields": {"Text": value},
+        }
+
+    if record_type == "NS":
+        target = clean_dns_name(record.target)
+        return {
+            "value": target,
+            "fields": {"Name server": target},
+        }
+
+    if record_type == "MX":
+        exchange = clean_dns_name(record.exchange)
+        return {
+            "value": exchange,
+            "fields": {
+                "Mail server": exchange,
+                "Priority": record.preference,
+            },
+        }
+
+    if record_type == "SOA":
+        authority = clean_dns_name(record.mname)
+        fields = {
+            "Start of authority": authority,
+            "Email": format_soa_email(record.rname),
+            "Serial": record.serial,
+            "Refresh": format_duration(record.refresh),
+            "Retry": format_duration(record.retry),
+            "Expire": format_duration(record.expire),
+            "Negative cache TTL": format_duration(record.minimum),
+        }
+        return {
+            "value": authority,
+            "fields": fields,
+        }
+
+    if record_type == "CAA":
+        caa_tag = decode_dns_text(record.tag)
+        caa_value = decode_dns_text(record.value)
+        display = f"{record.flags} {caa_tag} {caa_value}"
+        return {
+            "value": display,
+            "fields": {
+                "Flags": record.flags,
+                "Tag": caa_tag,
+                "Value": caa_value,
+            },
+        }
+
+    value = str(record)
+    return {
+        "value": value,
+        "fields": {"Value": value},
+    }
+
+def empty_domain_detail_section(record_type, message=None):
+    return {
+        "type": record_type,
+        "description": DOMAIN_DETAIL_DESCRIPTIONS.get(record_type, ""),
+        "records": [],
+        "ttl": None,
+        "ttl_display": None,
+        "message": message or f"No {record_type} records found.",
+    }
+
+def resolve_domain_detail_section(domain, record_type):
+    try:
+        answers = dns.resolver.resolve(domain, record_type, lifetime=5)
+        ttl = getattr(getattr(answers, "rrset", None), "ttl", None)
+        return {
+            "type": record_type,
+            "description": DOMAIN_DETAIL_DESCRIPTIONS.get(record_type, ""),
+            "records": [serialize_domain_detail_record(record, record_type) for record in answers],
+            "ttl": ttl,
+            "ttl_display": format_duration(ttl),
+            "message": None,
+        }
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+        return empty_domain_detail_section(record_type)
+    except Exception as e:
+        return empty_domain_detail_section(record_type, str(e))
+
+def build_spf_detail_section(txt_section):
+    records = []
+    for record in txt_section.get("records", []):
+        value = record.get("value", "")
+        if value.strip().lower().startswith("v=spf1"):
+            records.append({
+                "value": value,
+                "fields": {"Policy": value},
+            })
+
+    section = {
+        "type": "SPF",
+        "description": DOMAIN_DETAIL_DESCRIPTIONS["SPF"],
+        "records": records,
+        "ttl": txt_section.get("ttl") if records else None,
+        "ttl_display": txt_section.get("ttl_display") if records else None,
+        "message": None if records else "No SPF policy found in TXT records.",
+    }
+    return section
+
 def clean_dns_name(value):
     return str(value).rstrip(".")
 
@@ -571,6 +745,33 @@ def evaluate_mta_sts(domain, mta_sts_txt, dns_ok, https_ok, policy_url, policy_t
     base_status = dns_ok and https_ok and valid_version and has_id
     level = "warning" if base_status and policy_mode != "enforce" else None
     return make_record(base_status, values, advisories, level=level)
+
+@app.route(route="domain-details")
+def domain_details(req: func.HttpRequest) -> func.HttpResponse:
+    domain = req.params.get("domain")
+    if not domain:
+        return func.HttpResponse("Please pass a domain on the query string", status_code=400)
+
+    domain = clean_dns_name(domain.strip().lower())
+    if not re.match(r"^(?!-)([a-z0-9-]{1,63}(?<!-)\.)+[a-z]{2,}$", domain):
+        return func.HttpResponse("Please pass a valid domain", status_code=400)
+
+    sections_by_type = {}
+    for record_type in DOMAIN_DETAIL_RECORD_TYPES:
+        sections_by_type[record_type] = resolve_domain_detail_section(domain, record_type)
+
+    sections = []
+    for record_type in DOMAIN_DETAIL_RECORD_TYPES:
+        section = sections_by_type[record_type]
+        sections.append(section)
+        if record_type == "TXT":
+            sections.append(build_spf_detail_section(section))
+
+    payload = {
+        "domain": domain,
+        "sections": sections,
+    }
+    return func.HttpResponse(json.dumps(payload), mimetype="application/json")
 
 @app.route(route="lookup")
 def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:

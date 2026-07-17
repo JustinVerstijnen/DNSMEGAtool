@@ -48,6 +48,7 @@ h1 {
     align-items: center;
     justify-content: center;
     display: flex;
+    flex-wrap: wrap;
     gap: 10px;
     margin-bottom: 20px;
 }
@@ -89,6 +90,10 @@ button svg {
     flex-shrink: 0;
 }
 
+.searchbox button {
+    margin-left: 0;
+}
+
 .spinner-container {
     position: relative;
     left: 50%;
@@ -118,6 +123,14 @@ button svg {
 
 #exportBtn:hover {
     background-color: #7ccf95;
+}
+
+.details-btn {
+    background-color: #b69df4;
+}
+
+.details-btn:hover {
+    background-color: #a88ce9;
 }
 
 .bulk-btn,
@@ -449,9 +462,12 @@ ul {
 .modal-close {
     background: transparent;
     border: none;
+    color: #111827;
+    height: 36px;
     font-size: 20px;
     cursor: pointer;
     padding: 6px 10px;
+    margin-left: 0;
 }
 
 .modal-hint {
@@ -488,6 +504,144 @@ ul {
 .bulk-run-btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+}
+
+.domain-details-content {
+    width: min(1040px, 100%);
+    max-height: min(86vh, 980px);
+    display: flex;
+    flex-direction: column;
+}
+
+.domain-details-content .modal-header {
+    align-items: flex-start;
+    gap: 16px;
+    border-bottom: 1px solid #e5e7eb;
+    padding-bottom: 12px;
+}
+
+.domain-details-content h2 {
+    margin: 0;
+}
+
+.domain-details-body {
+    overflow: auto;
+    padding: 8px 4px 2px;
+}
+
+.domain-details-section {
+    padding: 16px 0 18px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.domain-details-section:last-child {
+    border-bottom: none;
+}
+
+.domain-details-section h3 {
+    margin: 0 0 6px;
+    font-size: 21px;
+}
+
+.domain-details-description {
+    margin: 0 0 12px;
+    color: #4b5563;
+    font-size: 14px;
+}
+
+.domain-details-empty {
+    margin: 0;
+    color: #6b7280;
+    font-size: 14px;
+}
+
+.domain-details-table {
+    table-layout: auto;
+    border-collapse: collapse;
+    border-radius: 0;
+}
+
+.domain-details-table th,
+.domain-details-table td {
+    max-width: none;
+    padding: 9px 12px;
+    border-bottom: 1px solid #e5e7eb;
+    text-align: left;
+    vertical-align: top;
+}
+
+.domain-details-table th {
+    color: #111827;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.domain-details-table th:last-child,
+.domain-details-table td:last-child {
+    width: 120px;
+    white-space: nowrap;
+}
+
+.domain-details-table td:first-child {
+    overflow-wrap: anywhere;
+}
+
+.domain-details-fields {
+    display: grid;
+    grid-template-columns: minmax(130px, max-content) minmax(0, 1fr);
+    gap: 4px 12px;
+    margin: 0;
+}
+
+.domain-details-fields dt {
+    color: #4b5563;
+    font-weight: 700;
+}
+
+.domain-details-fields dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.domain-details-muted {
+    color: #6b7280;
+}
+
+.domain-details-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    min-height: 220px;
+    color: #4b5563;
+}
+
+.details-spinner {
+    width: 28px;
+    height: 28px;
+    border: 4px solid #ede9fe;
+    border-top-color: #a78bfa;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@media (max-width: 700px) {
+    input[type="text"] {
+        width: 100%;
+    }
+
+    .searchbox {
+        align-items: stretch;
+    }
+
+    .searchbox button {
+        flex: 1 1 140px;
+        justify-content: center;
+    }
+
+    .domain-details-table {
+        min-width: 680px;
+    }
 }
 
 #bulkTable td,

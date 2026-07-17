@@ -1,5 +1,6 @@
 let isLoading = false;
 let currentMode = "single"; // "single" | "bulk"
+let lastCheckedDomain = "";
 
 const recordDescriptions = {
     "MX": "Mail Exchange records tells the internet where the server of your domain is.",
@@ -31,6 +32,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const checkBtn = document.getElementById("checkBtn");
     const bulkBtn = document.getElementById("bulkBtn");
     const exportBtn = document.getElementById("exportBtn");
+    const detailsBtn = document.getElementById("detailsBtn");
 
     domainInput.focus();
 
@@ -68,6 +70,30 @@ document.addEventListener("DOMContentLoaded", function () {
     const bulkRunBtn = document.getElementById("bulkRunBtn");
     if (bulkRunBtn) bulkRunBtn.addEventListener("click", runBulkLookup);
 
+    if (detailsBtn) {
+        detailsBtn.addEventListener("click", function (event) {
+            event.preventDefault();
+            openDomainDetailsModal();
+        });
+    }
+
+    const detailsClose = document.getElementById("detailsClose");
+    if (detailsClose) detailsClose.addEventListener("click", closeDomainDetailsModal);
+
+    const detailsModal = document.getElementById("detailsModal");
+    if (detailsModal) {
+        detailsModal.addEventListener("click", function (event) {
+            if (event.target === detailsModal) closeDomainDetailsModal();
+        });
+    }
+
+    document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+            closeBulkModal();
+            closeDomainDetailsModal();
+        }
+    });
+
     exportBtn.addEventListener("click", function (event) {
         event.preventDefault();
         exportReport();
@@ -87,6 +113,189 @@ function closeBulkModal() {
     const bulkModal = document.getElementById("bulkModal");
     if (!bulkModal) return;
     bulkModal.style.display = "none";
+}
+
+async function openDomainDetailsModal() {
+    const domain = lastCheckedDomain || normalizeDomain(document.getElementById("domainInput").value);
+    if (!isValidDomain(domain)) {
+        alert("The input does not appear to be a valid domain. Please check your entry.");
+        return;
+    }
+
+    const detailsModal = document.getElementById("detailsModal");
+    const detailsTitle = document.getElementById("detailsTitle");
+    const detailsSubtitle = document.getElementById("detailsSubtitle");
+    const detailsBody = document.getElementById("detailsBody");
+    if (!detailsModal || !detailsTitle || !detailsSubtitle || !detailsBody) return;
+
+    detailsTitle.textContent = "Domain details";
+    detailsSubtitle.textContent = domain;
+    detailsBody.innerHTML = "";
+    detailsBody.appendChild(createDetailsLoadingState());
+    detailsModal.style.display = "flex";
+
+    try {
+        const response = await fetch(`/api/domain-details?domain=${encodeURIComponent(domain)}`);
+        if (!response.ok) throw new Error(`Details lookup failed with status ${response.status}`);
+        const data = await response.json();
+        renderDomainDetails(data);
+    } catch (error) {
+        console.error(error);
+        detailsBody.innerHTML = "";
+        const errorBox = document.createElement("div");
+        errorBox.className = "domain-details-empty";
+        errorBox.textContent = "Domain details could not be loaded. Please try again in a few moments.";
+        detailsBody.appendChild(errorBox);
+    }
+}
+
+function closeDomainDetailsModal() {
+    const detailsModal = document.getElementById("detailsModal");
+    if (!detailsModal) return;
+    detailsModal.style.display = "none";
+}
+
+function createDetailsLoadingState() {
+    const wrapper = document.createElement("div");
+    wrapper.className = "domain-details-loading";
+
+    const spinner = document.createElement("div");
+    spinner.className = "details-spinner";
+
+    const text = document.createElement("span");
+    text.textContent = "Loading DNS records...";
+
+    wrapper.appendChild(spinner);
+    wrapper.appendChild(text);
+    return wrapper;
+}
+
+function renderDomainDetails(data) {
+    const detailsBody = document.getElementById("detailsBody");
+    if (!detailsBody) return;
+
+    detailsBody.innerHTML = "";
+
+    if (!data?.sections?.length) {
+        const empty = document.createElement("div");
+        empty.className = "domain-details-empty";
+        empty.textContent = "No DNS details were returned for this domain.";
+        detailsBody.appendChild(empty);
+        return;
+    }
+
+    data.sections.forEach((section) => {
+        detailsBody.appendChild(createDomainDetailsSection(section));
+    });
+}
+
+function formatRecordSectionTitle(type) {
+    if (type === "CNAME" || type === "SOA") return `${type} record`;
+    return `${type} records`;
+}
+
+function getDetailValueLabel(type) {
+    const labels = {
+        A: "IPv4 address",
+        AAAA: "IPv6 address",
+        CNAME: "Canonical name",
+        TXT: "Text value",
+        SPF: "SPF policy",
+        NS: "Name server",
+        MX: "Mail server",
+        SOA: "SOA data",
+        CAA: "CAA value",
+        DS: "DS data",
+        DNSKEY: "DNSKEY data"
+    };
+    return labels[type] || "Value";
+}
+
+function createDomainDetailsSection(section) {
+    const wrapper = document.createElement("section");
+    wrapper.className = "domain-details-section";
+
+    const heading = document.createElement("h3");
+    heading.textContent = formatRecordSectionTitle(section.type);
+    wrapper.appendChild(heading);
+
+    if (section.description) {
+        const description = document.createElement("p");
+        description.className = "domain-details-description";
+        description.textContent = section.description;
+        wrapper.appendChild(description);
+    }
+
+    if (!section.records?.length) {
+        const empty = document.createElement("p");
+        empty.className = "domain-details-empty";
+        empty.textContent = section.message || `No ${section.type} records found.`;
+        wrapper.appendChild(empty);
+        return wrapper;
+    }
+
+    const table = document.createElement("table");
+    table.className = "domain-details-table";
+
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    [getDetailValueLabel(section.type), "Details", "Revalidate in"].forEach((label) => {
+        const th = document.createElement("th");
+        th.textContent = label;
+        headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    section.records.forEach((record) => {
+        const row = document.createElement("tr");
+
+        const valueCell = document.createElement("td");
+        valueCell.appendChild(createValueNode(record.value));
+        row.appendChild(valueCell);
+
+        const detailsCell = document.createElement("td");
+        detailsCell.appendChild(createDetailFieldsList(record.fields, record.value));
+        row.appendChild(detailsCell);
+
+        const ttlCell = document.createElement("td");
+        ttlCell.textContent = section.ttl_display || "";
+        row.appendChild(ttlCell);
+
+        tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+
+    wrapper.appendChild(table);
+    return wrapper;
+}
+
+function createDetailFieldsList(fields, primaryValue) {
+    const entries = Object.entries(fields || {})
+        .filter(([, value]) => value !== undefined && value !== null && value !== "")
+        .filter(([, value]) => String(value) !== String(primaryValue) || Object.keys(fields || {}).length > 1);
+
+    if (!entries.length) {
+        const muted = document.createElement("span");
+        muted.className = "domain-details-muted";
+        muted.textContent = "Same as value";
+        return muted;
+    }
+
+    const list = document.createElement("dl");
+    list.className = "domain-details-fields";
+
+    entries.forEach(([label, value]) => {
+        const dt = document.createElement("dt");
+        dt.textContent = label;
+        const dd = document.createElement("dd");
+        dd.appendChild(createValueNode(value));
+        list.appendChild(dt);
+        list.appendChild(dd);
+    });
+
+    return list;
 }
 
 function normalizeDomain(input) {
@@ -114,9 +323,12 @@ async function checkDomain() {
     const checkBtn = document.getElementById("checkBtn");
     const bulkBtn = document.getElementById("bulkBtn");
     const exportBtn = document.getElementById("exportBtn");
+    const detailsBtn = document.getElementById("detailsBtn");
 
     checkBtn.disabled = true;
     if (bulkBtn) bulkBtn.disabled = true;
+    if (detailsBtn) detailsBtn.style.display = "none";
+    lastCheckedDomain = "";
 
     let domain = normalizeDomain(document.getElementById("domainInput").value);
     document.getElementById("domainInput").value = domain;
@@ -147,7 +359,9 @@ async function checkDomain() {
 
     try {
         const response = await fetch(`/api/lookup?domain=${encodeURIComponent(domain)}`);
+        if (!response.ok) throw new Error(`Lookup failed with status ${response.status}`);
         const data = await response.json();
+        lastCheckedDomain = domain;
 
         // Fill the table
         for (const type of recordOrder) {
@@ -229,6 +443,7 @@ async function checkDomain() {
 
         resultsSection.style.display = "block";
         exportBtn.style.display = "inline-block";
+        if (detailsBtn && lastCheckedDomain) detailsBtn.style.display = "inline-flex";
     }
 }
 
@@ -481,6 +696,7 @@ async function runBulkLookup() {
     const bulkBtn = document.getElementById("bulkBtn");
     const checkBtn = document.getElementById("checkBtn");
     const exportBtn = document.getElementById("exportBtn");
+    const detailsBtn = document.getElementById("detailsBtn");
 
     const raw = (bulkTextarea?.value || "").split(/\r?\n/);
     const domains = raw
@@ -508,14 +724,17 @@ async function runBulkLookup() {
     }
 
     closeBulkModal();
+    closeDomainDetailsModal();
 
     isLoading = true;
     currentMode = "bulk";
+    lastCheckedDomain = "";
     document.querySelector(".container")?.classList.add("bulk-mode");
 
     checkBtn.disabled = true;
     if (bulkBtn) bulkBtn.disabled = true;
     if (bulkRunBtn) bulkRunBtn.disabled = true;
+    if (detailsBtn) detailsBtn.style.display = "none";
 
     const loader = document.getElementById("loader");
     const resultsSection = document.getElementById("resultsSection");
