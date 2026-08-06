@@ -345,6 +345,7 @@ async function checkDomain() {
     const resultsSection = document.getElementById("resultsSection");
     const bulkResultsSection = document.getElementById("bulkResultsSection");
     const tbody = document.querySelector("#resultTable tbody");
+    const resultTableWrapper = document.querySelector("#resultTable")?.closest(".table-wrapper");
     const extraInfo = document.getElementById("extraInfo");
 
     // Reset views
@@ -356,56 +357,61 @@ async function checkDomain() {
     // Clear existing content
     tbody.innerHTML = "";
     extraInfo.innerHTML = "";
+    if (resultTableWrapper) resultTableWrapper.style.display = "";
 
     try {
         const response = await fetch(`/api/lookup?domain=${encodeURIComponent(domain)}`);
         if (!response.ok) throw new Error(`Lookup failed with status ${response.status}`);
         const data = await response.json();
         lastCheckedDomain = domain;
+        const domainIsAvailable = data.WHOIS?.lookup_status === "available";
+        if (resultTableWrapper) resultTableWrapper.style.display = domainIsAvailable ? "none" : "";
 
-        // Fill the table
-        for (const type of recordOrder) {
-            const record = data[type];
-            if (!record || record.skipped) continue;
-            record.type = type;
+        if (!domainIsAvailable) {
+            // Fill the table
+            for (const type of recordOrder) {
+                const record = data[type];
+                if (!record || record.skipped) continue;
+                record.type = type;
 
-            const row = document.createElement("tr");
-            row.className = `status-row row-${getStatusLevel(record)}`;
-            const typeCell = document.createElement("td");
-            typeCell.appendChild(createRecordTypeLabel(type));
+                const row = document.createElement("tr");
+                row.className = `status-row row-${getStatusLevel(record)}`;
+                const typeCell = document.createElement("td");
+                typeCell.appendChild(createRecordTypeLabel(type));
 
-            const statusCell = document.createElement("td");
-            statusCell.appendChild(createStatusIcon(record));
+                const statusCell = document.createElement("td");
+                statusCell.appendChild(createStatusIcon(record));
 
-            const valueCell = document.createElement("td");
-            appendRecordDetails(valueCell, record);
+                const valueCell = document.createElement("td");
+                appendRecordDetails(valueCell, record);
 
-            row.appendChild(typeCell);
-            row.appendChild(valueCell);
-            row.appendChild(statusCell);
-            tbody.appendChild(row);
-        }
-
-        // Confetti if all green
-        let allGreen = true;
-        for (const type of recordOrder) {
-            const record = data[type];
-            if (!record || record.skipped) continue;
-            if (!record.status || getStatusLevel(record) !== "success") {
-                allGreen = false;
-                break;
+                row.appendChild(typeCell);
+                row.appendChild(valueCell);
+                row.appendChild(statusCell);
+                tbody.appendChild(row);
             }
-        }
-        if (allGreen && typeof confetti === "function") {
-            confetti({
-                particleCount: 300,
-                spread: 200,
-                origin: { y: 0.6 },
-            });
+
+            // Confetti if all green
+            let allGreen = true;
+            for (const type of recordOrder) {
+                const record = data[type];
+                if (!record || record.skipped) continue;
+                if (!record.status || getStatusLevel(record) !== "success") {
+                    allGreen = false;
+                    break;
+                }
+            }
+            if (allGreen && typeof confetti === "function") {
+                confetti({
+                    particleCount: 300,
+                    spread: 200,
+                    origin: { y: 0.6 },
+                });
+            }
         }
 
         // Extra info: Nameservers (API returns an array)
-        if (data.NS) {
+        if (!domainIsAvailable && data.NS) {
             const nsBox = document.createElement("div");
             nsBox.className = "infobox";
             const listItems = Array.isArray(data.NS) ? data.NS.map((ns) => `<li>${ns}</li>`).join("") : "";
@@ -648,7 +654,7 @@ function createWhoisMessage(whoisData) {
     const text = document.createElement("p");
     text.className = "whois-message";
     if (whoisData?.lookup_status === "available") {
-        text.appendChild(document.createTextNode("Domain is "));
+        text.appendChild(document.createTextNode("This domain is "));
         const strong = document.createElement("strong");
         strong.textContent = "free";
         text.appendChild(strong);

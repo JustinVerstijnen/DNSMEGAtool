@@ -515,7 +515,7 @@ def normalize_domain_availability_message(domain, message):
     if not text:
         return None
     if re.search(r"\b(is free|available for registration|not found)\b", text, re.IGNORECASE):
-        return "Domain is free and available for registration."
+        return "This domain is free and available for registration."
     return text
 
 def empty_whois_payload(domain, lookup_status="no_public_details", lookup_message=None):
