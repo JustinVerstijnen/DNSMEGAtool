@@ -159,11 +159,16 @@ button svg {
 }
 
 .table-wrapper {
-    overflow-x: auto;
+    overflow: visible;
     margin-top: 20px;
     border-radius: 10px;
     box-shadow: 0 0 10px rgba(0,0,0,0.1);
     background: #fff;
+}
+
+#bulkResultsSection .table-wrapper {
+    overflow-x: auto;
+    overflow-y: clip;
 }
 
 table {
@@ -317,6 +322,10 @@ ul {
     word-break: break-word;
 }
 
+#resultTable ul {
+    max-width: 100%;
+}
+
 .whois-message {
     margin: 0 0 8px;
     color: #374151;
@@ -416,6 +425,21 @@ ul {
 }
 
 .record-tooltip-text a {
+    display: block;
+    margin-top: 8px;
+    font-weight: 700;
+    text-decoration: underline;
+}
+
+a.record-tooltip-text,
+a.record-tooltip-text:visited,
+a.record-tooltip-text:hover,
+a.record-tooltip-text:active {
+    color: #fff;
+    text-decoration: none;
+}
+
+.tooltip-read-more {
     display: block;
     margin-top: 8px;
     font-weight: 700;

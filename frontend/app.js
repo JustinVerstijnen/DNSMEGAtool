@@ -475,19 +475,24 @@ function createRecordTypeLabel(type) {
 
     const description = recordDescriptions[type];
     if (description) {
-        const tooltip = document.createElement("span");
+        const tooltip = documentationLink ? document.createElement("a") : document.createElement("span");
         tooltip.className = "tooltip-text record-tooltip-text";
+        if (documentationLink) {
+            tooltip.href = documentationLink;
+            tooltip.target = "_blank";
+            tooltip.rel = "noopener noreferrer";
+            tooltip.setAttribute("aria-label", `Read more about ${type}`);
+        }
+
         const descriptionText = document.createElement("span");
         descriptionText.textContent = description;
         tooltip.appendChild(descriptionText);
 
         if (documentationLink) {
-            const link = document.createElement("a");
-            link.href = documentationLink;
-            link.target = "_blank";
-            link.rel = "noopener noreferrer";
-            link.textContent = "📖 Read more";
-            tooltip.appendChild(link);
+            const readMore = document.createElement("span");
+            readMore.className = "tooltip-read-more";
+            readMore.textContent = "Read more";
+            tooltip.appendChild(readMore);
         }
 
         wrapper.appendChild(tooltip);
