@@ -13,6 +13,8 @@ import html
 import os
 import ipaddress
 import uuid
+import contextlib
+import io
 from datetime import datetime, timezone
 
 # Function settings
@@ -166,10 +168,12 @@ def check_mx_blacklists(mx_hosts):
     values = []
     advisories = []
     total_listed = 0
+    unresolved_hosts = []
 
     for mx_host in mx_hosts:
         ips = resolve_mx_host_ips(mx_host)
         if not ips:
+            unresolved_hosts.append(mx_host)
             values.append(f"{mx_host}\nBlacklist check: unavailable, MX host IP address could not be resolved")
             continue
 
@@ -179,7 +183,11 @@ def check_mx_blacklists(mx_hosts):
         advisories.extend(summary["advisories"])
         values.append(f"{mx_host}\n{summary['line']}")
 
-    return values, advisories, total_listed
+    if unresolved_hosts:
+        host_list = ", ".join(unresolved_hosts)
+        advisories.append(f"MX host address record not found for: {host_list}. Add an A or AAAA record for each MX host.")
+
+    return values, advisories, total_listed, unresolved_hosts
 
 
 
@@ -482,6 +490,102 @@ def get_whois_field(whois_data, *names):
             return value
     return None
 
+WHOIS_FIELDS = [
+    "domain_name",
+    "registrar",
+    "whois_server",
+    "creation_date",
+    "updated_date",
+    "expiration_date",
+    "name",
+    "organization",
+    "address",
+    "city",
+    "state",
+    "zipcode",
+    "country",
+    "emails",
+    "phone",
+    "administrative_contact",
+    "status",
+]
+
+def normalize_domain_availability_message(domain, message):
+    text = str(message or "").strip()
+    if not text:
+        return None
+    if re.search(r"\b(is free|available for registration|not found)\b", text, re.IGNORECASE):
+        return "Domain is free and available for registration."
+    return text
+
+def empty_whois_payload(domain, lookup_status="no_public_details", lookup_message=None):
+    payload = {field: None for field in WHOIS_FIELDS}
+    payload["domain_name"] = domain
+    payload["lookup_status"] = lookup_status
+    payload["lookup_message"] = lookup_message or "No public WHOIS details found."
+    if lookup_status == "available":
+        payload["status"] = "Available for registration"
+    return payload
+
+def has_public_whois_details(payload):
+    return any(payload.get(field) for field in WHOIS_FIELDS if field != "domain_name")
+
+def get_rdap_availability_message(domain):
+    try:
+        response = requests.get(
+            f"https://rdap.org/domain/{domain}",
+            headers={"Accept": "application/rdap+json, application/json", "User-Agent": "DNSMegaTool/1.0"},
+            timeout=6
+        )
+        if response.status_code != 404:
+            return None
+        try:
+            rdap_data = response.json()
+            description = " ".join(rdap_data.get("description", []))
+            message = description or rdap_data.get("title")
+        except Exception:
+            message = response.text
+        return normalize_domain_availability_message(domain, message)
+    except Exception:
+        return None
+
+def build_whois_payload(domain, whois_data, administrative_contacts):
+    payload = {
+        "domain_name": get_whois_field(whois_data, "domain_name") or domain,
+        "registrar": get_whois_field(whois_data, "registrar"),
+        "whois_server": get_whois_field(whois_data, "whois_server"),
+        "creation_date": get_whois_field(whois_data, "creation_date"),
+        "updated_date": get_whois_field(whois_data, "updated_date"),
+        "expiration_date": get_whois_field(whois_data, "expiration_date"),
+        "name": get_whois_field(whois_data, "name", "registrant_name"),
+        "organization": get_whois_field(whois_data, "org", "organization", "registrant_organization"),
+        "address": get_whois_field(whois_data, "address", "registrant_street"),
+        "city": get_whois_field(whois_data, "city", "registrant_city"),
+        "state": get_whois_field(whois_data, "state", "registrant_state"),
+        "zipcode": get_whois_field(whois_data, "zipcode", "registrant_postal_code"),
+        "country": get_whois_field(whois_data, "country", "registrant_country"),
+        "emails": get_whois_field(whois_data, "emails", "email"),
+        "phone": get_whois_field(whois_data, "phone", "registrant_phone"),
+        "administrative_contact": administrative_contacts,
+        "status": get_whois_field(whois_data, "status"),
+        "lookup_status": "found",
+        "lookup_message": None,
+    }
+
+    if has_public_whois_details(payload):
+        return payload
+
+    availability_message = get_rdap_availability_message(domain)
+    if availability_message:
+        return empty_whois_payload(domain, "available", availability_message)
+
+    return empty_whois_payload(domain)
+
+def lookup_whois_data(domain):
+    stream = io.StringIO()
+    with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream):
+        return whois.whois(domain)
+
 def get_vcard_value(vcard_entries, key):
     values = []
     for entry in vcard_entries:
@@ -619,6 +723,12 @@ def get_mail_certificate_status(mx_hosts):
             "Days left: 0",
             "Valid until: Not available"
         ], [f"SMTP TLS certificate check timed out for {mx_host} on port 25"])
+    except socket.gaierror:
+        return make_record(False, [
+            "Validity state: Invalid",
+            "Days left: 0",
+            "Valid until: Not available"
+        ], [f"MX host does not resolve to an IP address: {mx_host}"])
     except smtplib.SMTPException as e:
         return make_record(False, [
             "Validity state: Invalid",
@@ -787,13 +897,13 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
         mx_records = dns.resolver.resolve(domain, 'MX')
         mx_records = sorted(mx_records, key=lambda r: r.preference)
         mx_hosts = [clean_dns_name(r.exchange) for r in mx_records]
-        mx_valid = len(mx_records) > 0
-        mx_values, mx_blacklist_advisories, mx_blacklist_total = check_mx_blacklists(mx_hosts)
+        mx_values, mx_blacklist_advisories, mx_blacklist_total, unresolved_mx_hosts = check_mx_blacklists(mx_hosts)
+        mx_valid = len(mx_records) > 0 and not unresolved_mx_hosts
         results['MX'] = make_record(
             mx_valid,
             mx_values if mx_values else mx_hosts,
             mx_blacklist_advisories,
-            level="warning" if mx_blacklist_total > 0 else None
+            level="error" if unresolved_mx_hosts else "warning" if mx_blacklist_total > 0 else None
         )
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
         results['MX'] = make_record(False, record_not_found("MX", domain))
@@ -960,28 +1070,14 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
 
     # WHOIS lookup
     try:
-        whois_data = whois.whois(domain)
+        whois_data = lookup_whois_data(domain)
         administrative_contacts = get_rdap_administrative_contacts(domain)
-        results['WHOIS'] = {
-            "domain_name": get_whois_field(whois_data, "domain_name"),
-            "registrar": get_whois_field(whois_data, "registrar"),
-            "whois_server": get_whois_field(whois_data, "whois_server"),
-            "creation_date": get_whois_field(whois_data, "creation_date"),
-            "updated_date": get_whois_field(whois_data, "updated_date"),
-            "expiration_date": get_whois_field(whois_data, "expiration_date"),
-            "name": get_whois_field(whois_data, "name", "registrant_name"),
-            "organization": get_whois_field(whois_data, "org", "organization", "registrant_organization"),
-            "address": get_whois_field(whois_data, "address", "registrant_street"),
-            "city": get_whois_field(whois_data, "city", "registrant_city"),
-            "state": get_whois_field(whois_data, "state", "registrant_state"),
-            "zipcode": get_whois_field(whois_data, "zipcode", "registrant_postal_code"),
-            "country": get_whois_field(whois_data, "country", "registrant_country"),
-            "emails": get_whois_field(whois_data, "emails", "email"),
-            "phone": get_whois_field(whois_data, "phone", "registrant_phone"),
-            "administrative_contact": administrative_contacts,
-            "status": get_whois_field(whois_data, "status")
-        }
+        results['WHOIS'] = build_whois_payload(domain, whois_data, administrative_contacts)
     except Exception as e:
-        results['WHOIS'] = {"error": str(e)}
+        availability_message = normalize_domain_availability_message(domain, str(e))
+        if availability_message:
+            results['WHOIS'] = empty_whois_payload(domain, "available", availability_message)
+        else:
+            results['WHOIS'] = empty_whois_payload(domain, "lookup_error", f"WHOIS lookup failed: {str(e)}")
 
     return func.HttpResponse(json.dumps(results), mimetype="application/json")

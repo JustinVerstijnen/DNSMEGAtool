@@ -422,13 +422,9 @@ async function checkDomain() {
             whoisTitle.textContent = `WHOIS Information for ${domain}:`;
             whoisBox.appendChild(whoisTitle);
 
-            if (data.WHOIS.error) {
-                const errorText = document.createElement("p");
-                errorText.textContent = data.WHOIS.error;
-                whoisBox.appendChild(errorText);
-            } else {
-                whoisBox.appendChild(createWhoisList(data.WHOIS));
-            }
+            const whoisMessage = createWhoisMessage(data.WHOIS);
+            if (whoisMessage) whoisBox.appendChild(whoisMessage);
+            whoisBox.appendChild(createWhoisList(data.WHOIS));
 
             extraInfo.appendChild(whoisBox);
         }
@@ -645,6 +641,24 @@ function appendValue(target, value) {
     target.appendChild(document.createTextNode(formatWhoisValue(value)));
 }
 
+function createWhoisMessage(whoisData) {
+    const message = whoisData?.lookup_message || whoisData?.error;
+    if (!message) return null;
+
+    const text = document.createElement("p");
+    text.className = "whois-message";
+    if (whoisData?.lookup_status === "available") {
+        text.appendChild(document.createTextNode("Domain is "));
+        const strong = document.createElement("strong");
+        strong.textContent = "free";
+        text.appendChild(strong);
+        text.appendChild(document.createTextNode(" and available for registration."));
+    } else {
+        text.textContent = message;
+    }
+    return text;
+}
+
 function createWhoisList(whoisData) {
     const list = document.createElement("ul");
     const order = [
@@ -681,7 +695,7 @@ function createWhoisList(whoisData) {
 
     if (!list.children.length) {
         const item = document.createElement("li");
-        item.textContent = "No public WHOIS details found.";
+        item.textContent = whoisData?.lookup_message || whoisData?.error || "No public WHOIS details found.";
         list.appendChild(item);
     }
 
