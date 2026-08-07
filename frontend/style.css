@@ -71,7 +71,7 @@ h1 {
 input[type="text"] {
     height: var(--control-height);
     padding: 0 10px;
-    width: 300px;
+    width: 250px;
     font-size: 16px;
     border: 1px solid #ccc;
     border-radius: 4px;
