@@ -1,6 +1,7 @@
 let isLoading = false;
 let currentMode = "single"; // "single" | "bulk"
 let lastCheckedDomain = "";
+let lastBulkResults = [];
 const appUrl = "https://tools.justinverstijnen.nl/dnsmegatool";
 const detailsModalAnimationMs = 260;
 
@@ -276,8 +277,8 @@ function createDomainDetailsSection(section, domainName) {
     const thead = document.createElement("thead");
     const headRow = document.createElement("tr");
     const headers = section.type === "WWW"
-        ? ["Type record", "Domainnaam", "Waarde record"]
-        : ["Domainnaam", "Waarde record"];
+        ? ["Record type", "Name", "Record value"]
+        : ["Name", "Record value"];
 
     headers.forEach((label) => {
         const th = document.createElement("th");
@@ -332,6 +333,7 @@ function isValidDomain(domain) {
 async function checkDomain() {
     isLoading = true;
     currentMode = "single";
+    lastBulkResults = [];
 
     document.querySelector(".container")?.classList.remove("bulk-mode");
 
@@ -603,6 +605,64 @@ function normalizeRecordValueLines(value) {
         .map((line) => line.trimEnd());
 }
 
+function getRecordStatusLabel(record) {
+    const level = getStatusLevel(record);
+    if (level === "success") return "Passed";
+    if (level === "warning") return "Warning";
+    return "Failed";
+}
+
+function serializeRecordForJsonExport(record) {
+    if (!record) {
+        return {
+            passed: false,
+            status: "Failed",
+            level: "error",
+            values: [],
+            advisories: ["No data"]
+        };
+    }
+
+    const values = Array.isArray(record.value)
+        ? record.value.flatMap((value) => normalizeRecordValueLines(value))
+        : normalizeRecordValueLines(record.value);
+
+    return {
+        passed: record.status === true,
+        status: getRecordStatusLabel(record),
+        level: getStatusLevel(record),
+        values,
+        raw_value: record.value ?? null,
+        advisories: Array.isArray(record.advisories) ? record.advisories : []
+    };
+}
+
+function serializeBulkLookupForJsonExport(domain, data) {
+    const records = {};
+
+    recordOrder.forEach((type) => {
+        const record = data?.[type] ? { ...data[type], type } : null;
+        records[type] = serializeRecordForJsonExport(record);
+    });
+
+    const dnsServers = Array.isArray(data?.NS)
+        ? data.NS
+        : data?.NS
+            ? [String(data.NS)]
+            : [];
+
+    records["DNS servers"] = {
+        passed: dnsServers.length > 0,
+        status: dnsServers.length > 0 ? "Passed" : "Failed",
+        level: dnsServers.length > 0 ? "success" : "error",
+        values: dnsServers,
+        raw_value: data?.NS ?? null,
+        advisories: dnsServers.length > 0 ? [] : ["No DNS servers found"]
+    };
+
+    return { domain, records };
+}
+
 function appendRecordValueLines(listItem, value) {
     const lines = normalizeRecordValueLines(value);
 
@@ -769,6 +829,7 @@ async function runBulkLookup() {
     isLoading = true;
     currentMode = "bulk";
     lastCheckedDomain = "";
+    lastBulkResults = [];
     document.querySelector(".container")?.classList.add("bulk-mode");
 
     checkBtn.disabled = true;
@@ -808,6 +869,12 @@ async function runBulkLookup() {
             } catch (e) {
                 data = null;
             }
+
+            const bulkExportRow = serializeBulkLookupForJsonExport(domain, data);
+            if (!data) {
+                bulkExportRow.error = "Lookup failed";
+            }
+            lastBulkResults.push(bulkExportRow);
 
             const row = document.createElement("tr");
 
@@ -975,6 +1042,11 @@ async function exportReport(format = "html") {
                 count: context.count,
                 table: getTableExportData(context.table)
             };
+
+            if (currentMode === "bulk") {
+                payload.domains = lastBulkResults;
+            }
+
             downloadBlob(JSON.stringify(payload, null, 2), `${context.filenameBase}.json`, "application/json;charset=utf-8;");
             return;
         }
