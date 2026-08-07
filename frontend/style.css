@@ -132,12 +132,74 @@ button svg {
     100% { transform: rotate(360deg); }
 }
 
+.export-control {
+    position: relative;
+    display: inline-flex;
+    margin-left: 0;
+}
+
 #exportBtn {
     background-color: #92dba5;
 }
 
 #exportBtn:hover {
     background-color: #7ccf95;
+}
+
+.export-trigger {
+    margin-left: 0;
+}
+
+.export-caret {
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid currentColor;
+    margin-left: 2px;
+}
+
+.export-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    min-width: 150px;
+    padding: 6px;
+    background: #fff;
+    border: 1px solid #dbe3dd;
+    border-radius: 8px;
+    box-shadow: 0 14px 28px rgba(0,0,0,0.18);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-6px);
+    transition: opacity 0.16s ease, transform 0.16s ease, visibility 0s linear 0.16s;
+    z-index: 100;
+}
+
+.export-control.open .export-menu {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+    transition-delay: 0s;
+}
+
+.export-menu button {
+    width: 100%;
+    height: 38px;
+    margin: 0;
+    padding: 0 12px;
+    justify-content: flex-start;
+    background: transparent;
+    color: #111827;
+    border: none;
+    border-radius: 6px;
+}
+
+.export-menu button:hover,
+.export-menu button:focus {
+    background: #eef8f1;
+    color: #166534;
+    outline: none;
 }
 
 .details-btn {
@@ -505,6 +567,35 @@ a.record-tooltip-text:active {
     box-shadow: 0 10px 30px rgba(0,0,0,0.2);
 }
 
+.details-modal {
+    opacity: 0;
+    transition: opacity 0.22s ease;
+}
+
+.details-modal .domain-details-content {
+    opacity: 0;
+    transform: translateY(28px) scale(0.96);
+    transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
+}
+
+.details-modal.modal-open {
+    opacity: 1;
+}
+
+.details-modal.modal-open .domain-details-content {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+
+.details-modal.modal-closing {
+    opacity: 0;
+}
+
+.details-modal.modal-closing .domain-details-content {
+    opacity: 0;
+    transform: translateY(18px) scale(0.98);
+}
+
 .modal-header {
     display: flex;
     justify-content: space-between;
@@ -691,8 +782,31 @@ a.record-tooltip-text:active {
         justify-content: center;
     }
 
+    .export-control {
+        flex: 1 1 140px;
+    }
+
+    .export-trigger {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .export-menu {
+        left: 0;
+        right: 0;
+    }
+
     .domain-details-table {
         min-width: 680px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .details-modal,
+    .details-modal .domain-details-content,
+    .export-menu {
+        transition: none;
+        transform: none;
     }
 }
 

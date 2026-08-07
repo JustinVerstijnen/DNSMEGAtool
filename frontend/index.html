@@ -24,7 +24,14 @@
             <input type="text" id="domainInput" placeholder="example.com">
             <button id="checkBtn"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="white" width="18" height="18" style="vertical-align:middle;margin-right:8px"><path d="M505 442.7L405.3 343c-4.5-4.5-10.6-7-17-7H372c27.6-35.3 44-79.7 44-128C416 93.1 322.9 0 208 0S0 93.1 0 208s93.1 208 208 208c48.3 0 92.7-16.4 128-44v16.3c0 6.4 2.5 12.5 7 17l99.7 99.7c9.4 9.4 24.6 9.4 33.9 0l28.3-28.3c9.4-9.4 9.4-24.6 .1-34zM208 336c-70.7 0-128-57.2-128-128 0-70.7 57.2-128 128-128 70.7 0 128 57.2 128 128 0 70.7-57.2 128-128 128z"/></svg>Check</button>
             <button id="bulkBtn" class="bulk-btn"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="white" d="M3 5h18v2H3V5zm0 6h18v2H3v-2zm0 6h18v2H3v-2z"/></svg>Bulk</button>
-            <button id="exportBtn" style="display:none;"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512" fill="white" width="18" height="18" style="vertical-align:middle;margin-right:8px"><path d="M64 0C28.7 0 0 28.7 0 64L0 448c0 35.3 28.7 64 64 64l256 0c35.3 0 64-28.7 64-64l0-288-128 0c-17.7 0-32-14.3-32-32L224 0 64 0zM256 0l0 128 128 0L256 0zM216 232l0 102.1 31-31c9.4-9.4 24.6-9.4 33.9 0s9.4 24.6 0 33.9l-72 72c-9.4 9.4-24.6 9.4-33.9 0l-72-72c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0l31 31L168 232c0-13.3 10.7-24 24-24s24 10.7 24 24z"/></svg>Export</button>
+            <div id="exportControl" class="export-control" style="display:none;">
+                <button id="exportBtn" class="export-trigger" aria-haspopup="true" aria-expanded="false"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512" fill="white" width="18" height="18" style="vertical-align:middle;margin-right:8px"><path d="M64 0C28.7 0 0 28.7 0 64L0 448c0 35.3 28.7 64 64 64l256 0c35.3 0 64-28.7 64-64l0-288-128 0c-17.7 0-32-14.3-32-32L224 0 64 0zM256 0l0 128 128 0L256 0zM216 232l0 102.1 31-31c9.4-9.4 24.6-9.4 33.9 0s9.4 24.6 0 33.9l-72 72c-9.4 9.4-24.6 9.4-33.9 0l-72-72c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0l31 31L168 232c0-13.3 10.7-24 24-24s24 10.7 24 24z"/></svg>Export<span class="export-caret" aria-hidden="true"></span></button>
+                <div id="exportMenu" class="export-menu" role="menu">
+                    <button type="button" role="menuitem" data-export-format="html">HTML</button>
+                    <button type="button" role="menuitem" data-export-format="json">JSON</button>
+                    <button type="button" role="menuitem" data-export-format="pdf">PDF</button>
+                </div>
+            </div>
             <button id="detailsBtn" class="details-btn" style="display:none;"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="white" d="M4 4h16v3H4V4zm0 5h16v11H4V9zm2 2v2h6v-2H6zm0 4v2h12v-2H6zm8-4v2h4v-2h-4z"/></svg>Domain details</button>
         </div>
 
@@ -45,7 +52,7 @@
         </div>
 
         <!-- Domain details modal -->
-        <div id="detailsModal" class="modal" style="display:none;">
+        <div id="detailsModal" class="modal details-modal" style="display:none;">
             <div class="modal-content domain-details-content">
                 <div class="modal-header">
                     <div>

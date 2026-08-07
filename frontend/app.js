@@ -1,6 +1,8 @@
 let isLoading = false;
 let currentMode = "single"; // "single" | "bulk"
 let lastCheckedDomain = "";
+const appUrl = "https://tools.justinverstijnen.nl/dnsmegatool";
+const detailsModalAnimationMs = 260;
 
 const recordDescriptions = {
     "MX": "Mail Exchange records tells the internet where the server of your domain is.",
@@ -32,6 +34,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const checkBtn = document.getElementById("checkBtn");
     const bulkBtn = document.getElementById("bulkBtn");
     const exportBtn = document.getElementById("exportBtn");
+    const exportControl = document.getElementById("exportControl");
     const detailsBtn = document.getElementById("detailsBtn");
 
     domainInput.focus();
@@ -91,14 +94,51 @@ document.addEventListener("DOMContentLoaded", function () {
         if (event.key === "Escape") {
             closeBulkModal();
             closeDomainDetailsModal();
+            setExportMenuOpen(false);
         }
     });
 
-    exportBtn.addEventListener("click", function (event) {
-        event.preventDefault();
-        exportReport();
+    if (exportControl) {
+        exportControl.addEventListener("click", function (event) {
+            event.stopPropagation();
+        });
+    }
+
+    if (exportBtn) {
+        exportBtn.addEventListener("click", function (event) {
+            event.preventDefault();
+            setExportMenuOpen(!exportControl?.classList.contains("open"));
+        });
+    }
+
+    document.querySelectorAll("[data-export-format]").forEach((item) => {
+        item.addEventListener("click", function (event) {
+            event.preventDefault();
+            setExportMenuOpen(false);
+            exportReport(item.dataset.exportFormat || "html");
+        });
+    });
+
+    document.addEventListener("click", function () {
+        setExportMenuOpen(false);
     });
 });
+
+function setExportMenuVisible(isVisible) {
+    const exportControl = document.getElementById("exportControl");
+    if (!exportControl) return;
+    exportControl.style.display = isVisible ? "inline-flex" : "none";
+    if (!isVisible) setExportMenuOpen(false);
+}
+
+function setExportMenuOpen(isOpen) {
+    const exportControl = document.getElementById("exportControl");
+    const exportBtn = document.getElementById("exportBtn");
+    if (!exportControl) return;
+
+    exportControl.classList.toggle("open", Boolean(isOpen));
+    if (exportBtn) exportBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+}
 
 function openBulkModal() {
     const bulkModal = document.getElementById("bulkModal");
@@ -132,7 +172,9 @@ async function openDomainDetailsModal() {
     detailsSubtitle.textContent = domain;
     detailsBody.innerHTML = "";
     detailsBody.appendChild(createDetailsLoadingState());
+    detailsModal.classList.remove("modal-closing");
     detailsModal.style.display = "flex";
+    requestAnimationFrame(() => detailsModal.classList.add("modal-open"));
 
     try {
         const response = await fetch(`/api/domain-details?domain=${encodeURIComponent(domain)}`);
@@ -152,7 +194,17 @@ async function openDomainDetailsModal() {
 function closeDomainDetailsModal() {
     const detailsModal = document.getElementById("detailsModal");
     if (!detailsModal) return;
-    detailsModal.style.display = "none";
+    if (detailsModal.style.display === "none") return;
+
+    detailsModal.classList.remove("modal-open");
+    detailsModal.classList.add("modal-closing");
+
+    window.setTimeout(() => {
+        if (!detailsModal.classList.contains("modal-open")) {
+            detailsModal.style.display = "none";
+            detailsModal.classList.remove("modal-closing");
+        }
+    }, detailsModalAnimationMs);
 }
 
 function createDetailsLoadingState() {
@@ -351,7 +403,7 @@ async function checkDomain() {
     // Reset views
     if (bulkResultsSection) bulkResultsSection.style.display = "none";
     resultsSection.style.display = "none";
-    exportBtn.style.display = "none";
+    setExportMenuVisible(false);
     loader.style.display = "flex";
 
     // Clear existing content
@@ -444,7 +496,7 @@ async function checkDomain() {
         isLoading = false;
 
         resultsSection.style.display = "block";
-        exportBtn.style.display = "inline-block";
+        setExportMenuVisible(true);
         if (detailsBtn && lastCheckedDomain) detailsBtn.style.display = "inline-flex";
     }
 }
@@ -769,7 +821,7 @@ async function runBulkLookup() {
 
     // Hide single results, show loader
     resultsSection.style.display = "none";
-    exportBtn.style.display = "none";
+    setExportMenuVisible(false);
     if (bulkResultsSection) bulkResultsSection.style.display = "none";
     loader.style.display = "flex";
 
@@ -845,16 +897,34 @@ async function runBulkLookup() {
 
         if (bulkProgressText) bulkProgressText.style.display = "none";
         if (bulkResultsSection) bulkResultsSection.style.display = "block";
-        exportBtn.style.display = "inline-block";
+        setExportMenuVisible(true);
     }
 }
 
-async function exportReport() {
-    const exportBtn = document.getElementById("exportBtn");
-    if (exportBtn.disabled) return;
+function getCleanElementText(element) {
+    const clone = element.cloneNode(true);
+    clone.querySelectorAll(".tooltip-text").forEach((tooltip) => tooltip.remove());
+    return clone.textContent.replace(/\s+/g, " ").trim();
+}
 
+function getTableExportData(table) {
+    if (!table) return { headers: [], rows: [] };
+
+    const headers = Array.from(table.querySelectorAll("thead th")).map(getCleanElementText);
+    const rows = Array.from(table.querySelectorAll("tbody tr")).map((row) => {
+        return Array.from(row.children).map((cell) => {
+            const statusIcon = cell.querySelector(".status-icon");
+            if (statusIcon?.getAttribute("aria-label")) return statusIcon.getAttribute("aria-label");
+            return getCleanElementText(cell);
+        });
+    });
+
+    return { headers, rows };
+}
+
+function getCurrentExportContext() {
     let table = null;
-    let filename = "";
+    let filenameBase = "";
     let label = "";
     let count = 0;
     let templateFile = "export-template-single.html";
@@ -863,34 +933,42 @@ async function exportReport() {
         table = document.querySelector("#bulkTable");
         count = document.querySelectorAll("#bulkTable tbody tr").length;
         label = `Bulk export (${count} domains)`;
-        filename = "bulk_dns_report.html";
+        filenameBase = "bulk_dns_report";
         templateFile = "export-template-bulk.html";
     } else {
         table = document.querySelector("#resultTable");
         const domain = normalizeDomain(document.getElementById("domainInput").value);
         if (!isValidDomain(domain)) {
             alert("The input does not appear to be a valid domain. Please check your entry.");
-            return;
+            return null;
         }
         label = domain;
-        filename = domain + "_dns_report.html";
+        count = 1;
+        filenameBase = `${domain}_dns_report`;
         templateFile = "export-template-single.html";
     }
 
+    return { table, filenameBase, label, count, templateFile };
+}
+
+async function buildExportHtml(context) {
     let tableHTML = "";
-    if (table) {
-        const clone = table.cloneNode(true);
+    if (context.table) {
+        const clone = context.table.cloneNode(true);
         tableHTML = clone.outerHTML;
     }
 
-    const template = await fetch(templateFile).then((r) => r.text());
+    const template = await fetch(context.templateFile).then((r) => r.text());
 
-    const filled = template
-        .replaceAll("{{domain}}", label)
-        .replaceAll("{{count}}", String(count))
+    return template
+        .replaceAll("{{domain}}", context.label)
+        .replaceAll("{{count}}", String(context.count))
+        .replaceAll("{{app_url}}", appUrl)
         .replace("{{report_content}}", tableHTML);
+}
 
-    const blob = new Blob([filled], { type: "text/html;charset=utf-8;" });
+function downloadBlob(content, filename, type) {
+    const blob = new Blob([content], { type });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
@@ -900,4 +978,52 @@ async function exportReport() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+}
+
+async function printReportAsPdf(html) {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+        alert("The PDF export could not be opened. Please allow pop-ups for this site and try again.");
+        return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.setTimeout(() => printWindow.print(), 500);
+}
+
+async function exportReport(format = "html") {
+    const exportBtn = document.getElementById("exportBtn");
+    if (exportBtn.disabled) return;
+
+    const context = getCurrentExportContext();
+    if (!context) return;
+
+    exportBtn.disabled = true;
+    try {
+        if (format === "json") {
+            const payload = {
+                generated_at: new Date().toISOString(),
+                source: appUrl,
+                mode: currentMode,
+                label: context.label,
+                count: context.count,
+                table: getTableExportData(context.table)
+            };
+            downloadBlob(JSON.stringify(payload, null, 2), `${context.filenameBase}.json`, "application/json;charset=utf-8;");
+            return;
+        }
+
+        const html = await buildExportHtml(context);
+        if (format === "pdf") {
+            await printReportAsPdf(html);
+            return;
+        }
+
+        downloadBlob(html, `${context.filenameBase}.html`, "text/html;charset=utf-8;");
+    } finally {
+        exportBtn.disabled = false;
+    }
 }
