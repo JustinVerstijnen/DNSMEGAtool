@@ -281,6 +281,7 @@ DOMAIN_DETAIL_DESCRIPTIONS = {
     "CNAME": "Aliases this name to another canonical hostname.",
     "TXT": "Stores text values used for verification, policy, and service configuration.",
     "SPF": "Shows SPF policies found in TXT records, listing which senders may send mail for this domain.",
+    "WWW": "Shows A, AAAA, and CNAME records published for the www hostname.",
     "NS": "Lists the authoritative name servers for this domain.",
     "MX": "Lists mail servers that receive email for this domain, ordered by priority.",
     "SOA": "Shows the start-of-authority data for this DNS zone.",
@@ -357,12 +358,10 @@ def serialize_domain_detail_record(record, record_type):
 
     if record_type == "MX":
         exchange = clean_dns_name(record.exchange)
+        value = f"{record.preference} {exchange}"
         return {
-            "value": exchange,
-            "fields": {
-                "Mail server": exchange,
-                "Priority": record.preference,
-            },
+            "value": value,
+            "fields": {},
         }
 
     if record_type == "SOA":
@@ -400,32 +399,66 @@ def serialize_domain_detail_record(record, record_type):
         "fields": {"Value": value},
     }
 
-def empty_domain_detail_section(record_type, message=None):
+def empty_domain_detail_section(record_type, message=None, name=None):
     return {
         "type": record_type,
         "description": DOMAIN_DETAIL_DESCRIPTIONS.get(record_type, ""),
         "records": [],
         "ttl": None,
         "ttl_display": None,
+        "name": name,
         "message": message or f"No {record_type} records found.",
     }
 
-def resolve_domain_detail_section(domain, record_type):
+def resolve_domain_detail_section(domain, record_type, display_type=None):
+    section_type = display_type or record_type
     try:
         answers = dns.resolver.resolve(domain, record_type, lifetime=5)
         ttl = getattr(getattr(answers, "rrset", None), "ttl", None)
         return {
-            "type": record_type,
-            "description": DOMAIN_DETAIL_DESCRIPTIONS.get(record_type, ""),
+            "type": section_type,
+            "description": DOMAIN_DETAIL_DESCRIPTIONS.get(section_type, ""),
             "records": [serialize_domain_detail_record(record, record_type) for record in answers],
             "ttl": ttl,
             "ttl_display": format_duration(ttl),
+            "name": domain,
             "message": None,
         }
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-        return empty_domain_detail_section(record_type)
+        return empty_domain_detail_section(section_type, name=domain)
     except Exception as e:
-        return empty_domain_detail_section(record_type, str(e))
+        return empty_domain_detail_section(section_type, str(e), name=domain)
+
+def resolve_www_detail_section(domain):
+    www_domain = f"www.{domain}"
+    records = []
+    ttls = []
+    messages = []
+
+    for record_type in ("A", "AAAA", "CNAME"):
+        section = resolve_domain_detail_section(www_domain, record_type, "WWW")
+        if section.get("ttl"):
+            ttls.append(section["ttl"])
+        if section.get("records"):
+            for record in section["records"]:
+                value = record.get("value", "")
+                records.append({
+                    "value": f"{record_type} {value}",
+                    "fields": {},
+                })
+        elif section.get("message"):
+            messages.append(f"{record_type}: {section['message']}")
+
+    ttl = min(ttls) if ttls else None
+    return {
+        "type": "WWW",
+        "description": DOMAIN_DETAIL_DESCRIPTIONS["WWW"],
+        "records": records,
+        "ttl": ttl,
+        "ttl_display": format_duration(ttl),
+        "name": www_domain,
+        "message": None if records else "No WWW A, AAAA, or CNAME records found.",
+    }
 
 def build_spf_detail_section(txt_section):
     records = []
@@ -443,6 +476,7 @@ def build_spf_detail_section(txt_section):
         "records": records,
         "ttl": txt_section.get("ttl") if records else None,
         "ttl_display": txt_section.get("ttl_display") if records else None,
+        "name": txt_section.get("name"),
         "message": None if records else "No SPF policy found in TXT records.",
     }
     return section
@@ -874,6 +908,8 @@ def domain_details(req: func.HttpRequest) -> func.HttpResponse:
     for record_type in DOMAIN_DETAIL_RECORD_TYPES:
         section = sections_by_type[record_type]
         sections.append(section)
+        if record_type == "CNAME":
+            sections.append(resolve_www_detail_section(domain))
         if record_type == "TXT":
             sections.append(build_spf_detail_section(section))
 

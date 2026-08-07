@@ -237,11 +237,12 @@ function renderDomainDetails(data) {
     }
 
     data.sections.forEach((section) => {
-        detailsBody.appendChild(createDomainDetailsSection(section));
+        detailsBody.appendChild(createDomainDetailsSection(section, data.domain));
     });
 }
 
 function formatRecordSectionTitle(type) {
+    if (type === "WWW") return "WWW records";
     if (type === "CNAME" || type === "SOA") return `${type} record`;
     return `${type} records`;
 }
@@ -253,8 +254,9 @@ function getDetailValueLabel(type) {
         CNAME: "Canonical name",
         TXT: "Text value",
         SPF: "SPF policy",
+        WWW: "Value",
         NS: "Name server",
-        MX: "Mail server",
+        MX: "Value",
         SOA: "SOA data",
         CAA: "CAA value",
         DS: "DS data",
@@ -263,7 +265,7 @@ function getDetailValueLabel(type) {
     return labels[type] || "Value";
 }
 
-function createDomainDetailsSection(section) {
+function createDomainDetailsSection(section, domainName) {
     const wrapper = document.createElement("section");
     wrapper.className = "domain-details-section";
 
@@ -308,7 +310,7 @@ function createDomainDetailsSection(section) {
         row.appendChild(valueCell);
 
         const detailsCell = document.createElement("td");
-        detailsCell.appendChild(createDetailFieldsList(record.fields, record.value));
+        detailsCell.appendChild(createDetailFieldsList(record.fields, record.value, section.name || domainName));
         row.appendChild(detailsCell);
 
         const ttlCell = document.createElement("td");
@@ -323,7 +325,7 @@ function createDomainDetailsSection(section) {
     return wrapper;
 }
 
-function createDetailFieldsList(fields, primaryValue) {
+function createDetailFieldsList(fields, primaryValue, fallbackName) {
     const entries = Object.entries(fields || {})
         .filter(([, value]) => value !== undefined && value !== null && value !== "")
         .filter(([, value]) => String(value) !== String(primaryValue) || Object.keys(fields || {}).length > 1);
@@ -331,7 +333,7 @@ function createDetailFieldsList(fields, primaryValue) {
     if (!entries.length) {
         const muted = document.createElement("span");
         muted.className = "domain-details-muted";
-        muted.textContent = "Same as value";
+        muted.textContent = fallbackName || lastCheckedDomain || normalizeDomain(document.getElementById("domainInput").value);
         return muted;
     }
 
