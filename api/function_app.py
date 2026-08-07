@@ -443,7 +443,8 @@ def resolve_www_detail_section(domain):
             for record in section["records"]:
                 value = record.get("value", "")
                 records.append({
-                    "value": f"{record_type} {value}",
+                    "record_type": record_type,
+                    "value": value,
                     "fields": {},
                 })
         elif section.get("message"):

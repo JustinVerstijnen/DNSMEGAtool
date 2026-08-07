@@ -719,35 +719,23 @@ a.record-tooltip-text:active {
     font-weight: 700;
 }
 
-.domain-details-table th:last-child,
-.domain-details-table td:last-child {
-    width: 120px;
-    white-space: nowrap;
-}
-
 .domain-details-table td:first-child {
     overflow-wrap: anywhere;
 }
 
-.domain-details-fields {
-    display: grid;
-    grid-template-columns: minmax(130px, max-content) minmax(0, 1fr);
-    gap: 4px 12px;
-    margin: 0;
+.domain-details-table th:first-child,
+.domain-details-table td:first-child {
+    width: 180px;
 }
 
-.domain-details-fields dt {
-    color: #4b5563;
-    font-weight: 700;
-}
-
-.domain-details-fields dd {
-    margin: 0;
+.domain-details-table th:nth-child(2),
+.domain-details-table td:nth-child(2) {
     overflow-wrap: anywhere;
 }
 
-.domain-details-muted {
-    color: #6b7280;
+.domain-details-table th:nth-child(3),
+.domain-details-table td:nth-child(3) {
+    overflow-wrap: anywhere;
 }
 
 .domain-details-loading {

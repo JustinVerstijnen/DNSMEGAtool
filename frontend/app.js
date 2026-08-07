@@ -247,24 +247,6 @@ function formatRecordSectionTitle(type) {
     return `${type} records`;
 }
 
-function getDetailValueLabel(type) {
-    const labels = {
-        A: "IPv4 address",
-        AAAA: "IPv6 address",
-        CNAME: "Canonical name",
-        TXT: "Text value",
-        SPF: "SPF policy",
-        WWW: "Value",
-        NS: "Name server",
-        MX: "Value",
-        SOA: "SOA data",
-        CAA: "CAA value",
-        DS: "DS data",
-        DNSKEY: "DNSKEY data"
-    };
-    return labels[type] || "Value";
-}
-
 function createDomainDetailsSection(section, domainName) {
     const wrapper = document.createElement("section");
     wrapper.className = "domain-details-section";
@@ -293,7 +275,11 @@ function createDomainDetailsSection(section, domainName) {
 
     const thead = document.createElement("thead");
     const headRow = document.createElement("tr");
-    [getDetailValueLabel(section.type), "Details", "Revalidate in"].forEach((label) => {
+    const headers = section.type === "WWW"
+        ? ["Type record", "Domainnaam", "Waarde record"]
+        : ["Domainnaam", "Waarde record"];
+
+    headers.forEach((label) => {
         const th = document.createElement("th");
         th.textContent = label;
         headRow.appendChild(th);
@@ -305,17 +291,19 @@ function createDomainDetailsSection(section, domainName) {
     section.records.forEach((record) => {
         const row = document.createElement("tr");
 
+        if (section.type === "WWW") {
+            const typeCell = document.createElement("td");
+            typeCell.textContent = record.record_type || "";
+            row.appendChild(typeCell);
+        }
+
+        const nameCell = document.createElement("td");
+        nameCell.appendChild(createValueNode(section.name || domainName || lastCheckedDomain));
+        row.appendChild(nameCell);
+
         const valueCell = document.createElement("td");
         valueCell.appendChild(createValueNode(record.value));
         row.appendChild(valueCell);
-
-        const detailsCell = document.createElement("td");
-        detailsCell.appendChild(createDetailFieldsList(record.fields, record.value, section.name || domainName));
-        row.appendChild(detailsCell);
-
-        const ttlCell = document.createElement("td");
-        ttlCell.textContent = section.ttl_display || "";
-        row.appendChild(ttlCell);
 
         tbody.appendChild(row);
     });
@@ -323,33 +311,6 @@ function createDomainDetailsSection(section, domainName) {
 
     wrapper.appendChild(table);
     return wrapper;
-}
-
-function createDetailFieldsList(fields, primaryValue, fallbackName) {
-    const entries = Object.entries(fields || {})
-        .filter(([, value]) => value !== undefined && value !== null && value !== "")
-        .filter(([, value]) => String(value) !== String(primaryValue) || Object.keys(fields || {}).length > 1);
-
-    if (!entries.length) {
-        const muted = document.createElement("span");
-        muted.className = "domain-details-muted";
-        muted.textContent = fallbackName || lastCheckedDomain || normalizeDomain(document.getElementById("domainInput").value);
-        return muted;
-    }
-
-    const list = document.createElement("dl");
-    list.className = "domain-details-fields";
-
-    entries.forEach(([label, value]) => {
-        const dt = document.createElement("dt");
-        dt.textContent = label;
-        const dd = document.createElement("dd");
-        dd.appendChild(createValueNode(value));
-        list.appendChild(dt);
-        list.appendChild(dd);
-    });
-
-    return list;
 }
 
 function normalizeDomain(input) {
