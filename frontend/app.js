@@ -1034,6 +1034,11 @@ async function exportReport(format = "html") {
     exportBtn.disabled = true;
     try {
         if (format === "json") {
+            if (currentMode === "bulk") {
+                downloadBlob(JSON.stringify({ domains: lastBulkResults }, null, 2), `${context.filenameBase}.json`, "application/json;charset=utf-8;");
+                return;
+            }
+
             const payload = {
                 generated_at: new Date().toISOString(),
                 source: appUrl,
@@ -1042,10 +1047,6 @@ async function exportReport(format = "html") {
                 count: context.count,
                 table: getTableExportData(context.table)
             };
-
-            if (currentMode === "bulk") {
-                payload.domains = lastBulkResults;
-            }
 
             downloadBlob(JSON.stringify(payload, null, 2), `${context.filenameBase}.json`, "application/json;charset=utf-8;");
             return;
