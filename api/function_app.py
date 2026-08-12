@@ -1117,7 +1117,12 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
             return state
 
         def build_selector_section(state):
-            values = state["dkim_values"] if state["dkim_values"] else ["DKIM key not found"]
+            if state["dkim_values"]:
+                values = state["dkim_values"]
+            elif state["record_exists"]:
+                values = ["DKIM key not found"]
+            else:
+                values = []
             details = []
 
             if state["record_exists"]:
@@ -1159,11 +1164,16 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
             state = inspect_selector(selector)
             if state["record_exists"] and state["dkim_values"]:
                 additional_dkim_found = True
-                additional_sections.append(build_selector_section(state))
+                section = build_selector_section(state)
+                section["original_selector"] = section["selector"]
+                section["selector"] = f"DKIM{len(additional_sections) + 1}"
+                section["details"] = []
+                additional_sections.append(section)
 
         selector1_ok = primary_states["selector1"]["record_exists"] and primary_states["selector1"]["key_published"]
         selector2_ok = primary_states["selector2"]["record_exists"] and primary_states["selector2"]["key_published"]
         primary_ok_count = int(selector1_ok) + int(selector2_ok)
+        primary_record_count = int(primary_states["selector1"]["record_exists"]) + int(primary_states["selector2"]["record_exists"])
         primary_cname_count = int(primary_states["selector1"]["record_type"] == "CNAME") + int(primary_states["selector2"]["record_type"] == "CNAME")
         dkim_value = {
             "kind": "dkim",
@@ -1204,7 +1214,10 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
             # orange as requested rather than failing it.
             any_dkim_key = primary_ok_count > 0 or additional_dkim_found
             if any_dkim_key:
-                if primary_ok_count == 1 and not additional_dkim_found:
+                if primary_record_count == 0 and additional_dkim_found:
+                    dkim_advisories.append("selector1 and selector2 are not configured, but a DKIM key was found on another selector.")
+                    results["DKIM"] = make_record(True, dkim_value, dkim_advisories, level="warning")
+                elif primary_ok_count == 1 and not additional_dkim_found:
                     dkim_advisories.append("Only one of selector1/selector2 has a published DKIM key.")
                     results["DKIM"] = make_record(True, dkim_value, dkim_advisories, level="warning")
                 else:

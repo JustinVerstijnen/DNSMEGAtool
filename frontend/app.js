@@ -565,7 +565,6 @@ function formatValueForTitle(value) {
                 (section.details || []).forEach((line) => lines.push(String(line ?? "")));
             });
             if (value.additional_sections?.length) {
-                lines.push("Other DKIM TXT records");
                 value.additional_sections.forEach((section) => {
                     lines.push(section.selector);
                     (section.values || []).forEach((line) => lines.push(String(line ?? "")));
@@ -617,7 +616,6 @@ function normalizeRecordValueLines(value) {
                 (section.details || []).forEach((line) => lines.push(String(line ?? "")));
             });
             if (value.additional_sections?.length) {
-                lines.push("Other DKIM TXT records");
                 value.additional_sections.forEach((section) => {
                     lines.push(section.selector);
                     (section.values || []).forEach((line) => lines.push(String(line ?? "")));
@@ -712,7 +710,24 @@ function appendRecordValueLines(listItem, value) {
 function appendDkimSection(list, section, extraClass = "") {
     const values = Array.isArray(section.values) && section.values.length
         ? section.values
-        : ["DKIM key not found"];
+        : [];
+
+    if (!values.length) {
+        const statusItem = document.createElement("li");
+        statusItem.className = `dkim-section ${extraClass}`.trim();
+
+        const selectorLabel = document.createElement("strong");
+        selectorLabel.textContent = `${section.selector}: `;
+        statusItem.appendChild(selectorLabel);
+
+        const statusText = document.createElement("span");
+        statusText.className = "dkim-key-value";
+        statusText.appendChild(createValueNode((section.details || [])[0] || "DKIM key not found"));
+        statusItem.appendChild(statusText);
+
+        list.appendChild(statusItem);
+        return;
+    }
 
     values.forEach((value, valueIndex) => {
         const valueItem = document.createElement("li");
@@ -777,13 +792,8 @@ function appendDkimDetails(cell, record) {
     });
 
     if (value.additional_sections?.length) {
-        const header = document.createElement("li");
-        header.className = "dkim-section dkim-separated dkim-extra-heading";
-        header.textContent = "Other DKIM TXT records";
-        list.appendChild(header);
-
-        value.additional_sections.forEach((section) => {
-            appendDkimSection(list, section, "dkim-extra-record");
+        value.additional_sections.forEach((section, index) => {
+            appendDkimSection(list, section, index === 0 ? "dkim-separated dkim-extra-record" : "dkim-extra-record");
         });
     }
 

@@ -420,6 +420,7 @@ ul {
 }
 
 .dkim-detail-item {
+    list-style: none;
     margin-top: 4px;
 }
 
