@@ -507,9 +507,10 @@ ul {
     top: -45%;
     left: 110%;
     padding: 12px;
-    background-color: #7090B2;
+    background-color: #8EAFDA;
     color: #fff;
     font-size: 12px;
+    border: 1px solid rgba(255,255,255,0.35);
     border-radius: 6px;
     box-shadow: 0 0 8px rgba(0,0,0,0.3);
     min-width: 220px;
@@ -522,15 +523,21 @@ ul {
 }
 
 .status-success .tooltip-text {
-    background-color: #18803a;
+    background-color: #eef8f1;
+    color: #166534;
+    border-color: #b7dfc2;
 }
 
 .status-warning .tooltip-text {
-    background-color: #9a6700;
+    background-color: #fff7e6;
+    color: #8a5b00;
+    border-color: #ffe0a3;
 }
 
 .status-error .tooltip-text {
-    background-color: #b42318;
+    background-color: #fdeeee;
+    color: #991b1b;
+    border-color: #f4b8b8;
 }
 
 .record-type {
