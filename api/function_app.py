@@ -966,25 +966,190 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
         results['SPF'] = make_record(False, str(e))
 
     # DKIM lookup
+    # Microsoft 365 normally publishes selector1/selector2 as CNAME records.
+    # Other providers often publish a DKIM public key directly as TXT under a
+    # provider-specific selector. DNS has no generic operation to enumerate all
+    # selector names, so in addition to selector1/selector2 we probe a curated set
+    # of common selector names and return every v=DKIM1 TXT value found there.
     try:
-        selectors = ['selector1', 'selector2']
+        primary_selectors = ["selector1", "selector2"]
+        common_selectors = [
+            "default", "google", "dkim", "mail", "smtp",
+            "s1", "s2", "k1", "k2", "mta",
+            "mandrill", "amazonses", "zoho", "zmail", "protonmail"
+        ]
+
+        # Deployments can add extra known selectors without changing the code.
+        configured_extra_selectors = [
+            selector.strip().lower()
+            for selector in os.environ.get("DKIM_EXTRA_SELECTORS", "").split(",")
+            if selector.strip()
+        ]
+        extra_selectors = []
+        for selector in common_selectors + configured_extra_selectors:
+            if selector not in primary_selectors and selector not in extra_selectors:
+                extra_selectors.append(selector)
+
         dkim_results = []
-        dkim_valid = True
+        dkim_advisories = []
+        primary_states = {}
+        microsoft_365_detected = False
+        additional_dkim_found = False
 
-        for selector in selectors:
-            dkim_domain = f"{selector}._domainkey.{domain}"
+        def is_microsoft_365_dkim_target(target):
+            target = clean_dns_name(target).lower()
+            # Current Microsoft DKIM infrastructure uses dkim.mail.microsoft.
+            # Legacy Microsoft 365 DKIM CNAME targets can reference onmicrosoft.com.
+            return (
+                target.endswith(".dkim.mail.microsoft")
+                or "._domainkey." in target and target.endswith(".onmicrosoft.com")
+            )
+
+        def get_dkim_txt_values(name):
             try:
-                dkim_records = dns.resolver.resolve(dkim_domain, 'TXT')
-                dkim_txt = [b.decode('utf-8') for r in dkim_records for b in r.strings]
-                dkim_results.append(f"{selector}: {dkim_txt[0]}")
+                answers = dns.resolver.resolve(name, "TXT")
             except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
-                dkim_results.append(f"{selector}: DKIM record not found: {dkim_domain}")
-                dkim_valid = False
-            except Exception as e:
-                dkim_results.append(f"{selector}: {str(e)}")
-                dkim_valid = False
+                return []
+            values = txt_record_values(answers)
+            return [value for value in values if value.strip().lower().startswith("v=dkim1")]
 
-        results['DKIM'] = make_record(dkim_valid, dkim_results)
+        def inspect_selector(selector):
+            selector_domain = f"{selector}._domainkey.{domain}"
+            state = {
+                "selector": selector,
+                "name": selector_domain,
+                "record_exists": False,
+                "record_type": None,
+                "cname_target": None,
+                "dkim_values": [],
+                "key_published": False,
+                "microsoft_365": False,
+                "lookup_warning": None,
+            }
+
+            # First inspect the published CNAME itself. This makes it possible to
+            # distinguish 'record exists but target key is not published' from
+            # 'selector record does not exist'.
+            try:
+                cname_answers = dns.resolver.resolve(selector_domain, "CNAME")
+                cname_targets = [clean_dns_name(answer.target) for answer in cname_answers]
+                if cname_targets:
+                    state["record_exists"] = True
+                    state["record_type"] = "CNAME"
+                    state["cname_target"] = cname_targets[0]
+                    state["microsoft_365"] = is_microsoft_365_dkim_target(cname_targets[0])
+                    try:
+                        state["dkim_values"] = get_dkim_txt_values(cname_targets[0])
+                        state["key_published"] = bool(state["dkim_values"])
+                    except Exception as exc:
+                        state["lookup_warning"] = f"DKIM target TXT lookup failed: {exc}"
+                    return state
+            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+                pass
+            except Exception as exc:
+                state["lookup_warning"] = f"CNAME lookup failed: {exc}"
+
+            # If no CNAME exists, check whether this selector publishes DKIM
+            # directly as TXT (common outside Microsoft 365).
+            try:
+                dkim_values = get_dkim_txt_values(selector_domain)
+                if dkim_values:
+                    state["record_exists"] = True
+                    state["record_type"] = "TXT"
+                    state["dkim_values"] = dkim_values
+                    state["key_published"] = True
+            except Exception as exc:
+                previous = state["lookup_warning"]
+                state["lookup_warning"] = (previous + "; " if previous else "") + f"TXT lookup failed: {exc}"
+
+            return state
+
+        # selector1 and selector2 get explicit status reporting because Microsoft
+        # 365 requires both selector CNAMEs to be configured.
+        for selector in primary_selectors:
+            state = inspect_selector(selector)
+            primary_states[selector] = state
+            microsoft_365_detected = microsoft_365_detected or state["microsoft_365"]
+
+            if state["record_exists"] and state["record_type"] == "CNAME":
+                dkim_results.append(
+                    f"{selector}: record exists (CNAME) -> {state['cname_target']}"
+                )
+                if state["key_published"]:
+                    for value in state["dkim_values"]:
+                        dkim_results.append(f"{selector}: DKIM key published: {value}")
+                else:
+                    dkim_results.append(f"{selector}: DKIM key not currently published at CNAME target")
+            elif state["record_exists"] and state["record_type"] == "TXT":
+                dkim_results.append(f"{selector}: record exists (TXT)")
+                for value in state["dkim_values"]:
+                    dkim_results.append(f"{selector}: DKIM key published: {value}")
+            else:
+                dkim_results.append(f"{selector}: record does not exist: {state['name']}")
+
+            if state["lookup_warning"]:
+                dkim_advisories.append(f"{selector}: {state['lookup_warning']}")
+
+        # Look for non-Microsoft DKIM records using common selectors. Every TXT
+        # value beginning with v=DKIM1 is returned; we do not stop after the first.
+        for selector in extra_selectors:
+            state = inspect_selector(selector)
+            if state["record_exists"] and state["dkim_values"]:
+                additional_dkim_found = True
+                if state["record_type"] == "CNAME":
+                    dkim_results.append(
+                        f"Additional DKIM selector {selector}: record exists (CNAME) -> {state['cname_target']}"
+                    )
+                else:
+                    dkim_results.append(f"Additional DKIM selector {selector}: record exists (TXT)")
+                for value in state["dkim_values"]:
+                    dkim_results.append(f"Additional DKIM selector {selector}: {value}")
+
+        selector1_ok = primary_states["selector1"]["record_exists"] and primary_states["selector1"]["key_published"]
+        selector2_ok = primary_states["selector2"]["record_exists"] and primary_states["selector2"]["key_published"]
+        primary_ok_count = int(selector1_ok) + int(selector2_ok)
+        primary_record_count = int(primary_states["selector1"]["record_exists"]) + int(primary_states["selector2"]["record_exists"])
+
+        if microsoft_365_detected:
+            dkim_results.append("Provider detected: Microsoft 365")
+
+            # A missing public key on one selector is intentionally a warning, not
+            # a hard failure. The selector CNAME may be correctly configured while
+            # Microsoft has no current key published behind the standby selector.
+            if primary_ok_count < 2:
+                command = f"Rotate-DkimSigningConfig -Identity {domain}"
+                dkim_results.append(f"Microsoft 365 action: {command}")
+                dkim_advisories.append(
+                    f"One or more Microsoft 365 DKIM selector keys are not currently published. "
+                    f"After confirming both selector CNAME records are correct, rotate the DKIM signing configuration with: {command}"
+                )
+
+            # Missing selector records are still surfaced explicitly. One missing or
+            # unpublished selector is orange; both selector records missing is red.
+            if primary_record_count == 0:
+                results["DKIM"] = make_record(False, dkim_results, dkim_advisories, level="error")
+            elif primary_ok_count < 2:
+                results["DKIM"] = make_record(True, dkim_results, dkim_advisories, level="warning")
+            else:
+                results["DKIM"] = make_record(True, dkim_results, dkim_advisories)
+        else:
+            # Non-Microsoft 365: selector1/selector2 are not requirements. A DKIM
+            # TXT key found on any checked selector is sufficient to mark DKIM as
+            # present. If only one of selector1/selector2 is found, keep the result
+            # orange as requested rather than failing it.
+            any_dkim_key = primary_ok_count > 0 or additional_dkim_found
+            if any_dkim_key:
+                if primary_ok_count == 1 and not additional_dkim_found:
+                    dkim_advisories.append("Only one of selector1/selector2 has a published DKIM key.")
+                    results["DKIM"] = make_record(True, dkim_results, dkim_advisories, level="warning")
+                else:
+                    results["DKIM"] = make_record(True, dkim_results, dkim_advisories)
+            else:
+                dkim_advisories.append(
+                    "No DKIM key was found on selector1, selector2, or the built-in common-selector scan. "
+                    "DNS does not provide a standard way to enumerate every possible DKIM selector name."
+                )
+                results["DKIM"] = make_record(False, dkim_results, dkim_advisories, level="error")
     except Exception as e:
         results['DKIM'] = make_record(False, str(e))
 
