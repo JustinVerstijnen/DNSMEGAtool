@@ -1122,13 +1122,13 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
 
             if state["record_exists"]:
                 if state["record_type"] == "CNAME":
-                    details.append(f"CNAME record found -> {state['cname_target']}")
+                    record_label = "CNAME record found"
                 else:
-                    details.append("TXT record found")
-                details.append("DKIM key found" if state["key_published"] else "DKIM key not found behind this record")
+                    record_label = "TXT record found"
+                key_label = "DKIM key found" if state["key_published"] else "DKIM key not found behind this record"
+                details.append(f"{record_label} | {key_label}")
             else:
-                details.append(f"DNS record not found: {state['name']}")
-                details.append("DKIM key not found")
+                details.append(f"DNS record not found | DKIM key not found")
 
             return {
                 "selector": state["selector"],
