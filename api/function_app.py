@@ -163,7 +163,16 @@ def build_blacklist_summary(checks):
         "advisories": advisories,
     }
 
-def check_mx_blacklists(mx_hosts):
+def worse_level(*levels):
+    priority = {"error": 3, "warning": 2, "success": 1, None: 0}
+    worst = None
+    for level in levels:
+        if priority.get(level, 0) > priority.get(worst, 0):
+            worst = level
+    return worst
+
+def check_mx_blacklists(mx_hosts, certificate_checks=None):
+    certificate_checks = certificate_checks or {}
     zones = get_dnsbl_zones()
     values = []
     advisories = []
@@ -171,17 +180,26 @@ def check_mx_blacklists(mx_hosts):
     unresolved_hosts = []
 
     for mx_host in mx_hosts:
+        details = []
         ips = resolve_mx_host_ips(mx_host)
         if not ips:
             unresolved_hosts.append(mx_host)
-            values.append(f"{mx_host}\nBlacklist check: unavailable, MX host IP address could not be resolved")
-            continue
+            details.append("Blacklist check: unavailable, MX host IP address could not be resolved")
+        else:
+            checks = [check_ip_against_dnsbls(ip, zones) for ip in ips]
+            summary = build_blacklist_summary(checks)
+            total_listed += summary["listed_count"]
+            advisories.extend(summary["advisories"])
+            details.append(summary["line"])
 
-        checks = [check_ip_against_dnsbls(ip, zones) for ip in ips]
-        summary = build_blacklist_summary(checks)
-        total_listed += summary["listed_count"]
-        advisories.extend(summary["advisories"])
-        values.append(f"{mx_host}\n{summary['line']}")
+        certificate_check = certificate_checks.get(mx_host)
+        if certificate_check:
+            details.append(certificate_check["line"])
+
+        values.append({
+            "text": mx_host,
+            "details": details,
+        })
 
     if unresolved_hosts:
         host_list = ", ".join(unresolved_hosts)
@@ -684,45 +702,44 @@ def get_rdap_administrative_contacts(domain):
     except Exception:
         return None
 
-def get_mail_certificate_status(mx_hosts):
-    if not mx_hosts:
-        return make_record(False, "No MX host available for certificate check")
+def make_certificate_check(status, level, line, advisories=None, days_left=None, expires_at=None):
+    return {
+        "status": status,
+        "level": level,
+        "line": line,
+        "advisories": advisories or [],
+        "days_left": days_left,
+        "expires_at": expires_at,
+    }
 
-    mx_host = clean_dns_name(mx_hosts[0])
+def check_mail_certificate_for_host(mx_host):
+    mx_host = clean_dns_name(mx_host)
     try:
         context = ssl.create_default_context()
         with smtplib.SMTP(mx_host, 25, timeout=7) as smtp:
             smtp.ehlo()
             if not smtp.has_extn("starttls"):
-                return {
-                    "status": False,
-                    "level": "error",
-                    "value": [
-                        "Validity state: Invalid",
-                        "Days left: 0",
-                        "Valid until: Not available"
-                    ]
-                }
+                return make_certificate_check(
+                    False,
+                    "error",
+                    "SSL certificate: invalid, STARTTLS not supported (0 days left)"
+                )
             smtp.starttls(context=context)
             smtp.ehlo()
             cert = smtp.sock.getpeercert()
 
         not_after = cert.get("notAfter")
         if not not_after:
-            return {"status": False, "level": "error", "value": "Certificate expiry date not available"}
+            return make_certificate_check(
+                False,
+                "error",
+                "SSL certificate: invalid, expiry date not available (0 days left)"
+            )
 
         expires_at = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
         now = datetime.now(timezone.utc)
         seconds_left = (expires_at - now).total_seconds()
         days_left = max(0, int(seconds_left // 86400))
-        common_name = ""
-        for subject_part in cert.get("subject", []):
-            for key, value in subject_part:
-                if key == "commonName":
-                    common_name = value
-                    break
-            if common_name:
-                break
 
         if seconds_left <= 0:
             level = "error"
@@ -734,48 +751,69 @@ def get_mail_certificate_status(mx_hosts):
             level = "success"
             valid = True
 
-        value = [
-            f"Validity state: {'Valid' if valid else 'Invalid'}",
-            f"Days left: {days_left}",
-            f"Valid until: {expires_at.strftime('%Y-%m-%d %H:%M:%S UTC')}",
-        ]
-
-        return {
-            "status": valid,
-            "level": level,
-            "days_left": days_left,
-            "value": value
-        }
+        valid_label = "valid" if valid else "invalid"
+        expiry_label = expires_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+        return make_certificate_check(
+            valid,
+            level,
+            f"SSL certificate: {valid_label} until {expiry_label} ({days_left} days left)",
+            days_left=days_left,
+            expires_at=expiry_label
+        )
     except ssl.SSLCertVerificationError as e:
-        return make_record(False, [
-            "Validity state: Invalid",
-            "Days left: 0",
-            "Valid until: Not available"
-        ], [f"SSL certificate verification failed for {mx_host}: {str(e)}"])
+        return make_certificate_check(
+            False,
+            "error",
+            "SSL certificate: invalid, verification failed (0 days left)",
+            [f"SSL certificate verification failed for {mx_host}: {str(e)}"]
+        )
     except (socket.timeout, TimeoutError):
-        return make_record(False, [
-            "Validity state: Invalid",
-            "Days left: 0",
-            "Valid until: Not available"
-        ], [f"SMTP TLS certificate check timed out for {mx_host} on port 25"])
+        return make_certificate_check(
+            False,
+            "error",
+            "SSL certificate: unavailable, SMTP TLS check timed out (0 days left)",
+            [f"SMTP TLS certificate check timed out for {mx_host} on port 25"]
+        )
     except socket.gaierror:
-        return make_record(False, [
-            "Validity state: Invalid",
-            "Days left: 0",
-            "Valid until: Not available"
-        ], [f"MX host does not resolve to an IP address: {mx_host}"])
+        return make_certificate_check(
+            False,
+            "error",
+            "SSL certificate: unavailable, MX host IP address could not be resolved (0 days left)",
+            [f"MX host does not resolve to an IP address: {mx_host}"]
+        )
     except smtplib.SMTPException as e:
-        return make_record(False, [
-            "Validity state: Invalid",
-            "Days left: 0",
-            "Valid until: Not available"
-        ], [f"SMTP TLS certificate check failed for {mx_host}: {str(e)}"])
+        return make_certificate_check(
+            False,
+            "error",
+            "SSL certificate: unavailable, SMTP TLS check failed (0 days left)",
+            [f"SMTP TLS certificate check failed for {mx_host}: {str(e)}"]
+        )
     except Exception as e:
-        return make_record(False, [
-            "Validity state: Invalid",
-            "Days left: 0",
-            "Valid until: Not available"
-        ], [str(e)])
+        return make_certificate_check(
+            False,
+            "error",
+            "SSL certificate: unavailable, check failed (0 days left)",
+            [str(e)]
+        )
+
+def check_mail_certificates(mx_hosts):
+    checks = {}
+    for mx_host in mx_hosts:
+        checks[clean_dns_name(mx_host)] = check_mail_certificate_for_host(mx_host)
+    return checks
+
+def get_mail_certificate_status(mx_hosts):
+    if not mx_hosts:
+        return make_record(False, "No MX host available for certificate check")
+
+    checks = check_mail_certificates([mx_hosts[0]])
+    check = checks.get(clean_dns_name(mx_hosts[0]))
+    return make_record(
+        check["status"],
+        [check["line"]],
+        check["advisories"],
+        level=check["level"]
+    )
 
 def evaluate_spf(spf_records):
     advisories = semicolon_spacing_advisories(spf_records)
@@ -880,12 +918,16 @@ def evaluate_mta_sts(domain, mta_sts_txt, dns_ok, https_ok, policy_url, policy_t
 
     values = []
     if mta_sts_txt:
-        values.append(mta_sts_txt)
-    values.append(f"DNS: {dns_ok}")
-    values.append(f"HTTPS: {https_ok}")
-    if https_ok:
-        values.append(f"Policy mode: {policy_mode or 'not found'}")
-    values.append(policy_url)
+        details = [
+            f"Website found: {'yes' if https_ok else 'no'}",
+            f"Policy mode: {policy_mode or 'not found'}",
+        ]
+        if policy_url:
+            details.append(policy_url)
+        values.append({
+            "text": mta_sts_txt,
+            "details": details,
+        })
 
     base_status = dns_ok and https_ok and valid_version and has_id
     level = "warning" if base_status and policy_mode != "enforce" else None
@@ -934,13 +976,24 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
         mx_records = dns.resolver.resolve(domain, 'MX')
         mx_records = sorted(mx_records, key=lambda r: r.preference)
         mx_hosts = [clean_dns_name(r.exchange) for r in mx_records]
-        mx_values, mx_blacklist_advisories, mx_blacklist_total, unresolved_mx_hosts = check_mx_blacklists(mx_hosts)
+        mx_certificate_checks = check_mail_certificates(mx_hosts)
+        mx_values, mx_blacklist_advisories, mx_blacklist_total, unresolved_mx_hosts = check_mx_blacklists(mx_hosts, mx_certificate_checks)
+        mx_certificate_advisories = []
+        mx_certificate_level = None
+        for certificate_check in mx_certificate_checks.values():
+            mx_certificate_advisories.extend(certificate_check["advisories"])
+            mx_certificate_level = worse_level(mx_certificate_level, certificate_check["level"])
         mx_valid = len(mx_records) > 0 and not unresolved_mx_hosts
+        mx_level = worse_level(
+            "error" if unresolved_mx_hosts else None,
+            "warning" if mx_blacklist_total > 0 else None,
+            mx_certificate_level
+        )
         results['MX'] = make_record(
-            mx_valid,
+            mx_valid and mx_certificate_level != "error",
             mx_values if mx_values else mx_hosts,
-            mx_blacklist_advisories,
-            level="error" if unresolved_mx_hosts else "warning" if mx_blacklist_total > 0 else None
+            mx_blacklist_advisories + mx_certificate_advisories,
+            level=mx_level
         )
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
         results['MX'] = make_record(False, record_not_found("MX", domain))
@@ -990,7 +1043,6 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
             if selector not in primary_selectors and selector not in extra_selectors:
                 extra_selectors.append(selector)
 
-        dkim_results = []
         dkim_advisories = []
         primary_states = {}
         microsoft_365_detected = False
@@ -1064,28 +1116,38 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
 
             return state
 
+        def build_selector_section(state):
+            values = state["dkim_values"] if state["dkim_values"] else ["DKIM key not found"]
+            details = []
+
+            if state["record_exists"]:
+                if state["record_type"] == "CNAME":
+                    details.append(f"DNS record found (CNAME) -> {state['cname_target']}")
+                else:
+                    details.append("DNS record found (TXT)")
+                details.append("DKIM key found" if state["key_published"] else "DKIM key not found behind this record")
+            else:
+                details.append(f"DNS record not found: {state['name']}")
+                details.append("DKIM key not found")
+
+            return {
+                "selector": state["selector"],
+                "values": values,
+                "details": details,
+                "record_exists": state["record_exists"],
+                "key_published": state["key_published"],
+            }
+
+        dkim_sections = []
+        additional_sections = []
+
         # selector1 and selector2 get explicit status reporting because Microsoft
         # 365 requires both selector CNAMEs to be configured.
         for selector in primary_selectors:
             state = inspect_selector(selector)
             primary_states[selector] = state
             microsoft_365_detected = microsoft_365_detected or state["microsoft_365"]
-
-            if state["record_exists"] and state["record_type"] == "CNAME":
-                dkim_results.append(
-                    f"{selector}: record exists (CNAME) -> {state['cname_target']}"
-                )
-                if state["key_published"]:
-                    for value in state["dkim_values"]:
-                        dkim_results.append(f"{selector}: DKIM key published: {value}")
-                else:
-                    dkim_results.append(f"{selector}: DKIM key not currently published at CNAME target")
-            elif state["record_exists"] and state["record_type"] == "TXT":
-                dkim_results.append(f"{selector}: record exists (TXT)")
-                for value in state["dkim_values"]:
-                    dkim_results.append(f"{selector}: DKIM key published: {value}")
-            else:
-                dkim_results.append(f"{selector}: record does not exist: {state['name']}")
+            dkim_sections.append(build_selector_section(state))
 
             if state["lookup_warning"]:
                 dkim_advisories.append(f"{selector}: {state['lookup_warning']}")
@@ -1096,29 +1158,30 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
             state = inspect_selector(selector)
             if state["record_exists"] and state["dkim_values"]:
                 additional_dkim_found = True
-                if state["record_type"] == "CNAME":
-                    dkim_results.append(
-                        f"Additional DKIM selector {selector}: record exists (CNAME) -> {state['cname_target']}"
-                    )
-                else:
-                    dkim_results.append(f"Additional DKIM selector {selector}: record exists (TXT)")
-                for value in state["dkim_values"]:
-                    dkim_results.append(f"Additional DKIM selector {selector}: {value}")
+                additional_sections.append(build_selector_section(state))
 
         selector1_ok = primary_states["selector1"]["record_exists"] and primary_states["selector1"]["key_published"]
         selector2_ok = primary_states["selector2"]["record_exists"] and primary_states["selector2"]["key_published"]
         primary_ok_count = int(selector1_ok) + int(selector2_ok)
         primary_record_count = int(primary_states["selector1"]["record_exists"]) + int(primary_states["selector2"]["record_exists"])
+        dkim_value = {
+            "kind": "dkim",
+            "microsoft_365": microsoft_365_detected,
+            "sections": dkim_sections,
+            "additional_sections": additional_sections,
+        }
 
         if microsoft_365_detected:
-            dkim_results.append("Provider detected: Microsoft 365")
-
             # A missing public key on one selector is intentionally a warning, not
             # a hard failure. The selector CNAME may be correctly configured while
             # Microsoft has no current key published behind the standby selector.
             if primary_ok_count < 2:
                 command = f"Rotate-DkimSigningConfig -Identity {domain}"
-                dkim_results.append(f"Microsoft 365 action: {command}")
+                dkim_value["action"] = {
+                    "command": command,
+                    "url": "https://security.microsoft.com/dkimv2",
+                    "message": "After confirming both selector CNAME records are correct, rotate the DKIM signing configuration:",
+                }
                 dkim_advisories.append(
                     f"One or more Microsoft 365 DKIM selector keys are not currently published. "
                     f"After confirming both selector CNAME records are correct, rotate the DKIM signing configuration with: {command}"
@@ -1127,11 +1190,11 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
             # Missing selector records are still surfaced explicitly. One missing or
             # unpublished selector is orange; both selector records missing is red.
             if primary_record_count == 0:
-                results["DKIM"] = make_record(False, dkim_results, dkim_advisories, level="error")
+                results["DKIM"] = make_record(False, dkim_value, dkim_advisories, level="error")
             elif primary_ok_count < 2:
-                results["DKIM"] = make_record(True, dkim_results, dkim_advisories, level="warning")
+                results["DKIM"] = make_record(True, dkim_value, dkim_advisories, level="warning")
             else:
-                results["DKIM"] = make_record(True, dkim_results, dkim_advisories)
+                results["DKIM"] = make_record(True, dkim_value, dkim_advisories)
         else:
             # Non-Microsoft 365: selector1/selector2 are not requirements. A DKIM
             # TXT key found on any checked selector is sufficient to mark DKIM as
@@ -1141,15 +1204,15 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
             if any_dkim_key:
                 if primary_ok_count == 1 and not additional_dkim_found:
                     dkim_advisories.append("Only one of selector1/selector2 has a published DKIM key.")
-                    results["DKIM"] = make_record(True, dkim_results, dkim_advisories, level="warning")
+                    results["DKIM"] = make_record(True, dkim_value, dkim_advisories, level="warning")
                 else:
-                    results["DKIM"] = make_record(True, dkim_results, dkim_advisories)
+                    results["DKIM"] = make_record(True, dkim_value, dkim_advisories)
             else:
                 dkim_advisories.append(
                     "No DKIM key was found on selector1, selector2, or the built-in common-selector scan. "
                     "DNS does not provide a standard way to enumerate every possible DKIM selector name."
                 )
-                results["DKIM"] = make_record(False, dkim_results, dkim_advisories, level="error")
+                results["DKIM"] = make_record(False, dkim_value, dkim_advisories, level="error")
     except Exception as e:
         results['DKIM'] = make_record(False, str(e))
 
@@ -1258,9 +1321,6 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
         pass
     except Exception as e:
         results['MTA-STS'] = make_record(False, str(e))
-
-    # MX SSL certificate validity lookup
-    results['MX SSL'] = get_mail_certificate_status(mx_hosts)
 
     # NS lookup
     try:

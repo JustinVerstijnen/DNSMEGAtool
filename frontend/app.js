@@ -13,8 +13,7 @@ const recordDescriptions = {
     "TLS-RPT": "SMTP TLS Reporting publishes where mail providers should send reports about encrypted mail delivery problems.",
     "MTA-STS": "Mail Transfer Agent Strict Transport Security tells mail servers to require encrypted SMTP delivery for this domain.",
     "DNSSEC": "Domain Name System Security Extensions add signed DNS data so resolvers can detect forged DNS answers.",
-    "DANE": "DNS-based Authentication of Named Entities publishes TLSA records so SMTP TLS certificates can be validated through DNSSEC.",
-    "MX SSL": "Checks the SSL certificate of the MX server of your domain."
+    "DANE": "DNS-based Authentication of Named Entities publishes TLSA records so SMTP TLS certificates can be validated through DNSSEC."
 };
 
 const recordDocumentationLinks = {
@@ -28,7 +27,7 @@ const recordDocumentationLinks = {
     "MTA-STS": "https://justinverstijnen.nl/what-is-mta-sts-and-how-to-protect-your-email-flow/"
 };
 
-const recordOrder = ["MX", "MX SSL", "SPF", "DKIM", "DMARC", "TLS-RPT", "DNSSEC", "DANE", "MTA-STS"];
+const recordOrder = ["MX", "SPF", "DKIM", "DMARC", "TLS-RPT", "DNSSEC", "DANE", "MTA-STS"];
 
 document.addEventListener("DOMContentLoaded", function () {
     const domainInput = document.getElementById("domainInput");
@@ -558,6 +557,24 @@ function createStatusIcon(record) {
 function formatValueForTitle(value) {
     if (Array.isArray(value)) return value.map(formatValueForTitle).join("\n");
     if (value && typeof value === "object") {
+        if (value.kind === "dkim") {
+            const lines = [];
+            (value.sections || []).forEach((section) => {
+                lines.push(section.selector);
+                (section.values || []).forEach((line) => lines.push(String(line ?? "")));
+                (section.details || []).forEach((line) => lines.push(String(line ?? "")));
+            });
+            if (value.additional_sections?.length) {
+                lines.push("Other DKIM TXT records");
+                value.additional_sections.forEach((section) => {
+                    lines.push(section.selector);
+                    (section.values || []).forEach((line) => lines.push(String(line ?? "")));
+                    (section.details || []).forEach((line) => lines.push(String(line ?? "")));
+                });
+            }
+            if (value.action?.command) lines.push(value.action.command);
+            return lines.join("\n");
+        }
         const lines = [];
         if (value.text !== undefined && value.text !== null) lines.push(String(value.text));
         if (Array.isArray(value.details)) {
@@ -592,6 +609,24 @@ function createValueNode(value) {
 
 function normalizeRecordValueLines(value) {
     if (value && typeof value === "object") {
+        if (value.kind === "dkim") {
+            const lines = [];
+            (value.sections || []).forEach((section) => {
+                lines.push(section.selector);
+                (section.values || []).forEach((line) => lines.push(String(line ?? "")));
+                (section.details || []).forEach((line) => lines.push(String(line ?? "")));
+            });
+            if (value.additional_sections?.length) {
+                lines.push("Other DKIM TXT records");
+                value.additional_sections.forEach((section) => {
+                    lines.push(section.selector);
+                    (section.values || []).forEach((line) => lines.push(String(line ?? "")));
+                    (section.details || []).forEach((line) => lines.push(String(line ?? "")));
+                });
+            }
+            if (value.action?.command) lines.push(value.action.command);
+            return lines;
+        }
         const lines = [];
         if (value.text !== undefined && value.text !== null) lines.push(String(value.text));
         if (Array.isArray(value.details)) {
@@ -674,7 +709,92 @@ function appendRecordValueLines(listItem, value) {
     });
 }
 
+function appendDkimSection(list, section, extraClass = "") {
+    const li = document.createElement("li");
+    li.className = `dkim-section ${extraClass}`.trim();
+
+    const title = document.createElement("div");
+    title.className = "dkim-selector-title";
+    title.textContent = section.selector;
+    li.appendChild(title);
+
+    const values = Array.isArray(section.values) && section.values.length
+        ? section.values
+        : ["DKIM key not found"];
+    values.forEach((value) => {
+        const valueLine = document.createElement("div");
+        valueLine.className = "dkim-key-value";
+        valueLine.appendChild(createValueNode(value));
+        li.appendChild(valueLine);
+    });
+
+    (section.details || []).forEach((detail) => {
+        const detailLine = document.createElement("div");
+        detailLine.className = "record-value-detail";
+        detailLine.appendChild(createValueNode(detail));
+        li.appendChild(detailLine);
+    });
+
+    list.appendChild(li);
+}
+
+function appendDkimAction(list, action) {
+    if (!action?.command) return;
+
+    const li = document.createElement("li");
+    li.className = "dkim-action";
+
+    const intro = document.createElement("div");
+    intro.className = "record-value-detail";
+    intro.textContent = action.message || "Rotate the Microsoft 365 DKIM signing configuration:";
+    li.appendChild(intro);
+
+    const command = document.createElement("code");
+    command.textContent = action.command;
+    li.appendChild(command);
+
+    if (action.url) {
+        const link = document.createElement("a");
+        link.href = action.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = action.url;
+        li.appendChild(link);
+    }
+
+    list.appendChild(li);
+}
+
+function appendDkimDetails(cell, record) {
+    const value = record?.value || {};
+    const list = document.createElement("ul");
+    list.className = "dkim-list";
+
+    (value.sections || []).forEach((section, index) => {
+        appendDkimSection(list, section, index > 0 ? "dkim-separated" : "");
+    });
+
+    if (value.additional_sections?.length) {
+        const header = document.createElement("li");
+        header.className = "dkim-section dkim-separated dkim-extra-heading";
+        header.textContent = "Other DKIM TXT records";
+        list.appendChild(header);
+
+        value.additional_sections.forEach((section) => {
+            appendDkimSection(list, section, "dkim-extra-record");
+        });
+    }
+
+    appendDkimAction(list, value.action);
+    cell.appendChild(list);
+}
+
 function appendRecordDetails(cell, record) {
+    if (record?.type === "DKIM" && record?.value?.kind === "dkim") {
+        appendDkimDetails(cell, record);
+        return;
+    }
+
     const value = record?.value;
     const values = Array.isArray(value) ? value : [value];
     const list = document.createElement("ul");
