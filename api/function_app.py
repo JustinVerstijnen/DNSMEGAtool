@@ -1147,16 +1147,38 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
         dkim_sections = []
         additional_sections = []
 
+        def add_additional_dkim_section(state):
+            section = build_selector_section(state)
+            section["original_selector"] = section["selector"]
+            section["selector"] = f"DKIM{len(additional_sections) + 1}"
+            section["details"] = []
+            additional_sections.append(section)
+
         # selector1 and selector2 get explicit status reporting because Microsoft
         # 365 requires both selector CNAMEs to be configured.
         for selector in primary_selectors:
             state = inspect_selector(selector)
             primary_states[selector] = state
             microsoft_365_detected = microsoft_365_detected or state["microsoft_365"]
-            dkim_sections.append(build_selector_section(state))
 
             if state["lookup_warning"]:
                 dkim_advisories.append(f"{selector}: {state['lookup_warning']}")
+
+        for selector in primary_selectors:
+            state = primary_states[selector]
+            display_state = state.copy()
+
+            if not microsoft_365_detected and state["record_type"] == "TXT" and state["dkim_values"]:
+                additional_dkim_found = True
+                add_additional_dkim_section(state)
+                display_state.update({
+                    "record_exists": False,
+                    "record_type": None,
+                    "dkim_values": [],
+                    "key_published": False,
+                })
+
+            dkim_sections.append(build_selector_section(display_state))
 
         # Look for non-Microsoft DKIM records using common selectors. Every TXT
         # value beginning with v=DKIM1 is returned; we do not stop after the first.
@@ -1164,16 +1186,12 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
             state = inspect_selector(selector)
             if state["record_exists"] and state["dkim_values"]:
                 additional_dkim_found = True
-                section = build_selector_section(state)
-                section["original_selector"] = section["selector"]
-                section["selector"] = f"DKIM{len(additional_sections) + 1}"
-                section["details"] = []
-                additional_sections.append(section)
+                add_additional_dkim_section(state)
 
-        selector1_ok = primary_states["selector1"]["record_exists"] and primary_states["selector1"]["key_published"]
-        selector2_ok = primary_states["selector2"]["record_exists"] and primary_states["selector2"]["key_published"]
+        selector1_ok = primary_states["selector1"]["record_type"] == "CNAME" and primary_states["selector1"]["key_published"]
+        selector2_ok = primary_states["selector2"]["record_type"] == "CNAME" and primary_states["selector2"]["key_published"]
         primary_ok_count = int(selector1_ok) + int(selector2_ok)
-        primary_record_count = int(primary_states["selector1"]["record_exists"]) + int(primary_states["selector2"]["record_exists"])
+        primary_record_count = int(primary_states["selector1"]["record_type"] == "CNAME") + int(primary_states["selector2"]["record_type"] == "CNAME")
         primary_cname_count = int(primary_states["selector1"]["record_type"] == "CNAME") + int(primary_states["selector2"]["record_type"] == "CNAME")
         dkim_value = {
             "kind": "dkim",
