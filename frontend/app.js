@@ -710,32 +710,34 @@ function appendRecordValueLines(listItem, value) {
 }
 
 function appendDkimSection(list, section, extraClass = "") {
-    const li = document.createElement("li");
-    li.className = `dkim-section ${extraClass}`.trim();
-
-    const title = document.createElement("div");
-    title.className = "dkim-selector-title";
-    title.textContent = section.selector;
-    li.appendChild(title);
-
     const values = Array.isArray(section.values) && section.values.length
         ? section.values
         : ["DKIM key not found"];
-    values.forEach((value) => {
-        const valueLine = document.createElement("div");
-        valueLine.className = "dkim-key-value";
-        valueLine.appendChild(createValueNode(value));
-        li.appendChild(valueLine);
-    });
 
-    (section.details || []).forEach((detail) => {
-        const detailLine = document.createElement("div");
-        detailLine.className = "record-value-detail";
-        detailLine.appendChild(createValueNode(detail));
-        li.appendChild(detailLine);
-    });
+    values.forEach((value, valueIndex) => {
+        const valueItem = document.createElement("li");
+        valueItem.className = `dkim-section ${extraClass}`.trim();
 
-    list.appendChild(li);
+        const selectorLabel = document.createElement("strong");
+        selectorLabel.textContent = `${section.selector}: `;
+        valueItem.appendChild(selectorLabel);
+
+        const keyValue = document.createElement("span");
+        keyValue.className = "dkim-key-value";
+        keyValue.appendChild(createValueNode(value));
+        valueItem.appendChild(keyValue);
+
+        list.appendChild(valueItem);
+
+        if (valueIndex === 0) {
+            (section.details || []).forEach((detail) => {
+                const detailItem = document.createElement("li");
+                detailItem.className = "record-value-detail dkim-detail-item";
+                detailItem.appendChild(createValueNode(detail));
+                list.appendChild(detailItem);
+            });
+        }
+    });
 }
 
 function appendDkimAction(list, action) {

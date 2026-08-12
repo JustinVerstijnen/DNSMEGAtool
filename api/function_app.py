@@ -1122,9 +1122,9 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
 
             if state["record_exists"]:
                 if state["record_type"] == "CNAME":
-                    details.append(f"DNS record found (CNAME) -> {state['cname_target']}")
+                    details.append(f"CNAME record found -> {state['cname_target']}")
                 else:
-                    details.append("DNS record found (TXT)")
+                    details.append("TXT record found")
                 details.append("DKIM key found" if state["key_published"] else "DKIM key not found behind this record")
             else:
                 details.append(f"DNS record not found: {state['name']}")
@@ -1135,6 +1135,7 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
                 "values": values,
                 "details": details,
                 "record_exists": state["record_exists"],
+                "record_type": state["record_type"],
                 "key_published": state["key_published"],
             }
 
@@ -1163,7 +1164,7 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
         selector1_ok = primary_states["selector1"]["record_exists"] and primary_states["selector1"]["key_published"]
         selector2_ok = primary_states["selector2"]["record_exists"] and primary_states["selector2"]["key_published"]
         primary_ok_count = int(selector1_ok) + int(selector2_ok)
-        primary_record_count = int(primary_states["selector1"]["record_exists"]) + int(primary_states["selector2"]["record_exists"])
+        primary_cname_count = int(primary_states["selector1"]["record_type"] == "CNAME") + int(primary_states["selector2"]["record_type"] == "CNAME")
         dkim_value = {
             "kind": "dkim",
             "microsoft_365": microsoft_365_detected,
@@ -1187,9 +1188,10 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
                     f"After confirming both selector CNAME records are correct, rotate the DKIM signing configuration with: {command}"
                 )
 
-            # Missing selector records are still surfaced explicitly. One missing or
-            # unpublished selector is orange; both selector records missing is red.
-            if primary_record_count == 0:
+            # Missing Microsoft 365 selector CNAME records are configuration errors.
+            # Published CNAMEs with missing target keys are warnings, so users can
+            # distinguish DNS setup issues from unpublished Microsoft-side keys.
+            if primary_cname_count < 2:
                 results["DKIM"] = make_record(False, dkim_value, dkim_advisories, level="error")
             elif primary_ok_count < 2:
                 results["DKIM"] = make_record(True, dkim_value, dkim_advisories, level="warning")

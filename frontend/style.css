@@ -413,14 +413,14 @@ ul {
     border-top: 1px solid rgba(17, 24, 39, 0.22);
 }
 
-.dkim-selector-title {
-    margin-bottom: 4px;
-    font-weight: 700;
-}
-
 .dkim-key-value {
+    display: inline;
     overflow-wrap: anywhere;
     word-break: break-word;
+}
+
+.dkim-detail-item {
+    margin-top: 4px;
 }
 
 .dkim-extra-heading {
