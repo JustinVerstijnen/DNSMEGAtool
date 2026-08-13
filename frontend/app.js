@@ -242,9 +242,25 @@ function renderDomainDetails(data) {
 }
 
 function formatRecordSectionTitle(type) {
-    if (type === "WWW") return "WWW records";
     if (type === "SOA") return `${type} record`;
     return `${type} records`;
+}
+
+function formatDomainDetailName(name, domainName) {
+    const domain = normalizeDomain(domainName || lastCheckedDomain);
+    const cleanName = String(name || "").trim().replace(/\.$/, "");
+
+    if (!cleanName || cleanName === "@") return "@";
+    if (!domain) return cleanName;
+
+    const lowerName = cleanName.toLowerCase();
+    const lowerDomain = domain.toLowerCase();
+    if (lowerName === lowerDomain) return "@";
+    if (lowerName.endsWith(`.${lowerDomain}`)) {
+        return cleanName.slice(0, -(domain.length + 1)) || "@";
+    }
+
+    return cleanName;
 }
 
 function createDomainDetailsSection(section, domainName) {
@@ -275,9 +291,7 @@ function createDomainDetailsSection(section, domainName) {
 
     const thead = document.createElement("thead");
     const headRow = document.createElement("tr");
-    const headers = section.type === "WWW"
-        ? ["Record type", "Name", "Record value"]
-        : ["Name", "Record value"];
+    const headers = ["Name", "Record value"];
 
     headers.forEach((label) => {
         const th = document.createElement("th");
@@ -291,14 +305,8 @@ function createDomainDetailsSection(section, domainName) {
     section.records.forEach((record) => {
         const row = document.createElement("tr");
 
-        if (section.type === "WWW") {
-            const typeCell = document.createElement("td");
-            typeCell.textContent = record.record_type || "";
-            row.appendChild(typeCell);
-        }
-
         const nameCell = document.createElement("td");
-        nameCell.appendChild(createValueNode(record.name || section.name || domainName || lastCheckedDomain));
+        nameCell.appendChild(createValueNode(formatDomainDetailName(record.name || section.name, domainName)));
         row.appendChild(nameCell);
 
         const valueCell = document.createElement("td");

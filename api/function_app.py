@@ -307,8 +307,8 @@ DOMAIN_DETAIL_DISCOVERY_NAMES = {
     ],
     "CNAME": [
         "autodiscover",
-        "enterpriseenrollment",
-        "enterpriseregistration",
+        "EnterpriseEnrollment",
+        "EnterpriseRegistration",
         "selector1._domainkey",
         "selector2._domainkey",
         "mta-sts",
@@ -327,7 +327,6 @@ DOMAIN_DETAIL_DESCRIPTIONS = {
     "CNAME": "Aliases this name to another canonical hostname.",
     "TXT": "Stores text values used for verification, policy, and service configuration, including SPF and common scoped TXT records.",
     "SPF": "Shows SPF policies found in TXT records, listing which senders may send mail for this domain.",
-    "WWW": "Shows A, AAAA, and CNAME records published for the www hostname.",
     "NS": "Lists the authoritative name servers for this domain.",
     "MX": "Lists mail servers that receive email for this domain, ordered by priority.",
     "SOA": "Shows the start-of-authority data for this DNS zone.",
@@ -487,11 +486,16 @@ def resolve_domain_detail_section(domain, record_type, display_type=None):
 
 def get_configured_domain_detail_names(record_type):
     configured = os.environ.get(f"DOMAIN_DETAIL_EXTRA_{record_type}_NAMES", "")
-    names = DOMAIN_DETAIL_DISCOVERY_NAMES.get(record_type, []).copy()
-    for name in configured.split(","):
-        clean_name = clean_dns_name(name.strip().lower())
-        if clean_name and clean_name not in names:
+    names = []
+    seen = set()
+
+    for name in DOMAIN_DETAIL_DISCOVERY_NAMES.get(record_type, []) + configured.split(","):
+        clean_name = clean_dns_name(name.strip())
+        key = clean_name.lower()
+        if clean_name and key not in seen:
             names.append(clean_name)
+            seen.add(key)
+
     return names
 
 def append_discovered_domain_detail_records(section, domain, record_type):
@@ -522,38 +526,6 @@ def append_discovered_domain_detail_records(section, domain, record_type):
     if section.get("records"):
         section["message"] = None
     return section
-
-def resolve_www_detail_section(domain):
-    www_domain = f"www.{domain}"
-    records = []
-    ttls = []
-    messages = []
-
-    for record_type in ("A", "AAAA", "CNAME"):
-        section = resolve_domain_detail_section(www_domain, record_type, "WWW")
-        if section.get("ttl"):
-            ttls.append(section["ttl"])
-        if section.get("records"):
-            for record in section["records"]:
-                value = record.get("value", "")
-                records.append({
-                    "record_type": record_type,
-                    "value": value,
-                    "fields": {},
-                })
-        elif section.get("message"):
-            messages.append(f"{record_type}: {section['message']}")
-
-    ttl = min(ttls) if ttls else None
-    return {
-        "type": "WWW",
-        "description": DOMAIN_DETAIL_DESCRIPTIONS["WWW"],
-        "records": records,
-        "ttl": ttl,
-        "ttl_display": format_duration(ttl),
-        "name": www_domain,
-        "message": None if records else "No WWW A, AAAA, or CNAME records found.",
-    }
 
 def build_spf_detail_section(txt_section):
     records = []
@@ -1030,8 +1002,6 @@ def domain_details(req: func.HttpRequest) -> func.HttpResponse:
     for record_type in DOMAIN_DETAIL_RECORD_TYPES:
         section = sections_by_type[record_type]
         sections.append(section)
-        if record_type == "CNAME":
-            sections.append(resolve_www_detail_section(domain))
 
     payload = {
         "domain": domain,
