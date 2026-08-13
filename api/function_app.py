@@ -293,11 +293,39 @@ def txt_record_values(records):
 
 DOMAIN_DETAIL_RECORD_TYPES = ["A", "AAAA", "CNAME", "TXT", "NS", "MX", "SOA", "CAA", "DS", "DNSKEY"]
 
+DOMAIN_DETAIL_DISCOVERY_NAMES = {
+    "TXT": [
+        "_dmarc",
+        "_mta-sts",
+        "_smtp._tls",
+        "_msradc",
+        "_bimi",
+        "default._bimi",
+        "_domainconnect",
+        "_github-pages-challenge",
+        "_acme-challenge",
+    ],
+    "CNAME": [
+        "autodiscover",
+        "enterpriseenrollment",
+        "enterpriseregistration",
+        "selector1._domainkey",
+        "selector2._domainkey",
+        "mta-sts",
+        "sip",
+        "lyncdiscover",
+        "mail",
+        "ftp",
+        "blog",
+        "flightblog",
+    ],
+}
+
 DOMAIN_DETAIL_DESCRIPTIONS = {
     "A": "Maps the domain name to IPv4 addresses.",
     "AAAA": "Maps the domain name to IPv6 addresses.",
     "CNAME": "Aliases this name to another canonical hostname.",
-    "TXT": "Stores text values used for verification, policy, and service configuration.",
+    "TXT": "Stores text values used for verification, policy, and service configuration, including SPF and common scoped TXT records.",
     "SPF": "Shows SPF policies found in TXT records, listing which senders may send mail for this domain.",
     "WWW": "Shows A, AAAA, and CNAME records published for the www hostname.",
     "NS": "Lists the authoritative name servers for this domain.",
@@ -417,6 +445,13 @@ def serialize_domain_detail_record(record, record_type):
         "fields": {"Value": value},
     }
 
+def with_domain_detail_record_context(record, name, ttl=None):
+    record["name"] = name
+    if ttl is not None:
+        record["ttl"] = ttl
+        record["ttl_display"] = format_duration(ttl)
+    return record
+
 def empty_domain_detail_section(record_type, message=None, name=None):
     return {
         "type": record_type,
@@ -436,7 +471,10 @@ def resolve_domain_detail_section(domain, record_type, display_type=None):
         return {
             "type": section_type,
             "description": DOMAIN_DETAIL_DESCRIPTIONS.get(section_type, ""),
-            "records": [serialize_domain_detail_record(record, record_type) for record in answers],
+            "records": [
+                with_domain_detail_record_context(serialize_domain_detail_record(record, record_type), domain, ttl)
+                for record in answers
+            ],
             "ttl": ttl,
             "ttl_display": format_duration(ttl),
             "name": domain,
@@ -446,6 +484,44 @@ def resolve_domain_detail_section(domain, record_type, display_type=None):
         return empty_domain_detail_section(section_type, name=domain)
     except Exception as e:
         return empty_domain_detail_section(section_type, str(e), name=domain)
+
+def get_configured_domain_detail_names(record_type):
+    configured = os.environ.get(f"DOMAIN_DETAIL_EXTRA_{record_type}_NAMES", "")
+    names = DOMAIN_DETAIL_DISCOVERY_NAMES.get(record_type, []).copy()
+    for name in configured.split(","):
+        clean_name = clean_dns_name(name.strip().lower())
+        if clean_name and clean_name not in names:
+            names.append(clean_name)
+    return names
+
+def append_discovered_domain_detail_records(section, domain, record_type):
+    existing_names = {record.get("name") for record in section.get("records", [])}
+
+    for relative_name in get_configured_domain_detail_names(record_type):
+        record_name = f"{relative_name}.{domain}"
+        if record_name in existing_names:
+            continue
+
+        try:
+            answers = dns.resolver.resolve(record_name, record_type, lifetime=4)
+            ttl = getattr(getattr(answers, "rrset", None), "ttl", None)
+            for answer in answers:
+                section["records"].append(
+                    with_domain_detail_record_context(
+                        serialize_domain_detail_record(answer, record_type),
+                        record_name,
+                        ttl
+                    )
+                )
+            existing_names.add(record_name)
+        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+            continue
+        except Exception:
+            continue
+
+    if section.get("records"):
+        section["message"] = None
+    return section
 
 def resolve_www_detail_section(domain):
     www_domain = f"www.{domain}"
@@ -945,7 +1021,10 @@ def domain_details(req: func.HttpRequest) -> func.HttpResponse:
 
     sections_by_type = {}
     for record_type in DOMAIN_DETAIL_RECORD_TYPES:
-        sections_by_type[record_type] = resolve_domain_detail_section(domain, record_type)
+        section = resolve_domain_detail_section(domain, record_type)
+        if record_type in DOMAIN_DETAIL_DISCOVERY_NAMES:
+            section = append_discovered_domain_detail_records(section, domain, record_type)
+        sections_by_type[record_type] = section
 
     sections = []
     for record_type in DOMAIN_DETAIL_RECORD_TYPES:
@@ -953,8 +1032,6 @@ def domain_details(req: func.HttpRequest) -> func.HttpResponse:
         sections.append(section)
         if record_type == "CNAME":
             sections.append(resolve_www_detail_section(domain))
-        if record_type == "TXT":
-            sections.append(build_spf_detail_section(section))
 
     payload = {
         "domain": domain,

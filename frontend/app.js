@@ -3,7 +3,7 @@ let currentMode = "single"; // "single" | "bulk"
 let lastCheckedDomain = "";
 let lastBulkResults = [];
 const appUrl = "https://tools.justinverstijnen.nl/dnsmegatool";
-const detailsModalAnimationMs = 260;
+const detailsModalAnimationMs = 420;
 
 const recordDescriptions = {
     "MX": "Mail Exchange records tells the internet where the server of your domain is.",
@@ -243,7 +243,7 @@ function renderDomainDetails(data) {
 
 function formatRecordSectionTitle(type) {
     if (type === "WWW") return "WWW records";
-    if (type === "CNAME" || type === "SOA") return `${type} record`;
+    if (type === "SOA") return `${type} record`;
     return `${type} records`;
 }
 
@@ -298,7 +298,7 @@ function createDomainDetailsSection(section, domainName) {
         }
 
         const nameCell = document.createElement("td");
-        nameCell.appendChild(createValueNode(section.name || domainName || lastCheckedDomain));
+        nameCell.appendChild(createValueNode(record.name || section.name || domainName || lastCheckedDomain));
         row.appendChild(nameCell);
 
         const valueCell = document.createElement("td");
