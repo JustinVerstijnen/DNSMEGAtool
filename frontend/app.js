@@ -2,6 +2,7 @@ let isLoading = false;
 let currentMode = "single"; // "single" | "bulk"
 let lastCheckedDomain = "";
 let lastBulkResults = [];
+let lastDomainDetailsData = null;
 const appUrl = "https://tools.justinverstijnen.nl/dnsmegatool";
 const detailsModalAnimationMs = 420;
 
@@ -36,6 +37,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const exportBtn = document.getElementById("exportBtn");
     const exportControl = document.getElementById("exportControl");
     const detailsBtn = document.getElementById("detailsBtn");
+    const detailsExportBtn = document.getElementById("detailsExportBtn");
+    const detailsExportControl = document.getElementById("detailsExportControl");
 
     domainInput.focus();
 
@@ -95,6 +98,7 @@ document.addEventListener("DOMContentLoaded", function () {
             closeBulkModal();
             closeDomainDetailsModal();
             setExportMenuOpen(false);
+            setDetailsExportMenuOpen(false);
         }
     });
 
@@ -119,8 +123,31 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     });
 
+    if (detailsExportControl) {
+        detailsExportControl.addEventListener("click", function (event) {
+            event.stopPropagation();
+        });
+    }
+
+    if (detailsExportBtn) {
+        detailsExportBtn.addEventListener("click", function (event) {
+            event.preventDefault();
+            if (detailsExportBtn.disabled) return;
+            setDetailsExportMenuOpen(!detailsExportControl?.classList.contains("open"));
+        });
+    }
+
+    document.querySelectorAll("[data-details-export-format]").forEach((item) => {
+        item.addEventListener("click", function (event) {
+            event.preventDefault();
+            setDetailsExportMenuOpen(false);
+            exportDomainDetails(item.dataset.detailsExportFormat || "html");
+        });
+    });
+
     document.addEventListener("click", function () {
         setExportMenuOpen(false);
+        setDetailsExportMenuOpen(false);
     });
 });
 
@@ -138,6 +165,23 @@ function setExportMenuOpen(isOpen) {
 
     exportControl.classList.toggle("open", Boolean(isOpen));
     if (exportBtn) exportBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+}
+
+function setDetailsExportMenuOpen(isOpen) {
+    const detailsExportControl = document.getElementById("detailsExportControl");
+    const detailsExportBtn = document.getElementById("detailsExportBtn");
+    if (!detailsExportControl) return;
+
+    detailsExportControl.classList.toggle("open", Boolean(isOpen));
+    if (detailsExportBtn) detailsExportBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+}
+
+function setDetailsExportEnabled(isEnabled) {
+    const detailsExportBtn = document.getElementById("detailsExportBtn");
+    if (!detailsExportBtn) return;
+
+    detailsExportBtn.disabled = !isEnabled;
+    if (!isEnabled) setDetailsExportMenuOpen(false);
 }
 
 function openBulkModal() {
@@ -170,6 +214,8 @@ async function openDomainDetailsModal() {
 
     detailsTitle.textContent = "Domain details";
     detailsSubtitle.textContent = domain;
+    lastDomainDetailsData = null;
+    setDetailsExportEnabled(false);
     detailsBody.innerHTML = "";
     detailsBody.appendChild(createDetailsLoadingState());
     detailsModal.classList.remove("modal-closing");
@@ -196,6 +242,7 @@ function closeDomainDetailsModal() {
     if (!detailsModal) return;
     if (detailsModal.style.display === "none") return;
 
+    setDetailsExportMenuOpen(false);
     detailsModal.classList.remove("modal-open");
     detailsModal.classList.add("modal-closing");
 
@@ -226,6 +273,8 @@ function renderDomainDetails(data) {
     const detailsBody = document.getElementById("detailsBody");
     if (!detailsBody) return;
 
+    lastDomainDetailsData = data || null;
+    setDetailsExportEnabled(Boolean(data?.sections?.length));
     detailsBody.innerHTML = "";
 
     if (!data?.sections?.length) {
@@ -1162,6 +1211,128 @@ async function printReportAsPdf(html) {
     printWindow.document.close();
     printWindow.focus();
     printWindow.setTimeout(() => printWindow.print(), 500);
+}
+
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+function serializeDomainDetailsForExport(data) {
+    const domain = data?.domain || lastCheckedDomain || normalizeDomain(document.getElementById("domainInput")?.value);
+
+    return {
+        generated_at: new Date().toISOString(),
+        source: appUrl,
+        mode: "domain-details",
+        domain,
+        sections: (data?.sections || []).map((section) => ({
+            type: section.type,
+            description: section.description || "",
+            message: section.message || null,
+            records: (section.records || []).map((record) => ({
+                name: formatDomainDetailName(record.name || section.name, domain),
+                fqdn: String(record.name || section.name || ""),
+                value: String(record.value ?? ""),
+                ttl: record.ttl ?? section.ttl ?? null,
+                ttl_display: record.ttl_display || section.ttl_display || null,
+                fields: record.fields || {},
+            })),
+        })),
+    };
+}
+
+function buildDomainDetailsExportHtml(payload) {
+    const sectionsHtml = payload.sections.map((section) => {
+        const recordsHtml = section.records.length
+            ? `<table>
+                <thead><tr><th>Name</th><th>Record value</th></tr></thead>
+                <tbody>
+                    ${section.records.map((record) => `
+                        <tr>
+                            <td>${escapeHtml(record.name)}</td>
+                            <td>${escapeHtml(record.value)}</td>
+                        </tr>
+                    `).join("")}
+                </tbody>
+            </table>`
+            : `<p class="empty">${escapeHtml(section.message || `No ${section.type} records found.`)}</p>`;
+
+        return `
+            <section>
+                <h2>${escapeHtml(formatRecordSectionTitle(section.type))}</h2>
+                ${section.description ? `<p class="description">${escapeHtml(section.description)}</p>` : ""}
+                ${recordsHtml}
+            </section>
+        `;
+    }).join("");
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DNS MEGAtool domain details - ${escapeHtml(payload.domain)}</title>
+  <style>
+    body{font-family:Segoe UI,Arial,sans-serif;margin:24px;background:#f6f6f6;color:#111827}
+    .wrap{max-width:1100px;margin:0 auto;background:#fff;padding:24px;border-radius:10px;box-shadow:0 0 15px rgba(0,0,0,.08)}
+    .brand-logo{width:54px;height:54px;margin-bottom:10px}
+    h1{margin:0 0 8px;text-align:center}
+    .brand{text-align:center}
+    .meta{color:#666;margin-bottom:22px;text-align:center}
+    section{padding:18px 0;border-bottom:1px solid #e5e7eb}
+    section:last-child{border-bottom:none}
+    h2{margin:0 0 6px;font-size:21px}
+    .description{margin:0 0 12px;color:#4b5563;font-size:14px}
+    .empty{margin:0;color:#6b7280;font-size:14px}
+    table{width:100%;border-collapse:collapse;table-layout:auto}
+    th,td{border:1px solid #ddd;padding:10px;text-align:left;vertical-align:top;overflow-wrap:anywhere;word-break:break-word}
+    th{background:#f2f2f2;font-size:13px}
+    th:first-child,td:first-child{width:180px}
+    .footer{color:#999;font-size:9px;margin-top:18px;text-align:center}
+    .footer a{color:#999;text-decoration:none}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <a href="https://justinverstijnen.nl" target="_blank" rel="noopener">
+        <img class="brand-logo" src="https://sajvwebsiteblobstorage.blob.core.windows.net/blog/tools-2375/logo.svg" alt="Justin Verstijnen logo">
+      </a>
+    </div>
+    <h1>DNS MEGAtool domain details</h1>
+    <div class="meta"><strong>Domain:</strong> ${escapeHtml(payload.domain)}</div>
+    ${sectionsHtml}
+    <div class="footer">
+      <a href="${escapeHtml(appUrl)}" target="_blank" rel="noopener">Report generated with the Justin Verstijnen DNS MEGAtool.</a>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+async function exportDomainDetails(format = "html") {
+    const detailsExportBtn = document.getElementById("detailsExportBtn");
+    if (!lastDomainDetailsData || detailsExportBtn?.disabled) return;
+
+    const payload = serializeDomainDetailsForExport(lastDomainDetailsData);
+    const filenameBase = `${payload.domain}_domain_details`;
+
+    if (detailsExportBtn) detailsExportBtn.disabled = true;
+    try {
+        if (format === "json") {
+            downloadBlob(JSON.stringify(payload, null, 2), `${filenameBase}.json`, "application/json;charset=utf-8;");
+            return;
+        }
+
+        downloadBlob(buildDomainDetailsExportHtml(payload), `${filenameBase}.html`, "text/html;charset=utf-8;");
+    } finally {
+        if (detailsExportBtn) detailsExportBtn.disabled = false;
+    }
 }
 
 async function exportReport(format = "html") {

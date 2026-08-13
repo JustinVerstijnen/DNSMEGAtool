@@ -157,11 +157,13 @@ button svg {
     margin-left: 0;
 }
 
-#exportBtn {
+#exportBtn,
+#detailsExportBtn {
     background-color: #92dba5;
 }
 
-#exportBtn:hover {
+#exportBtn:hover,
+#detailsExportBtn:hover {
     background-color: #7ccf95;
 }
 
@@ -169,6 +171,11 @@ button svg {
     margin-left: 0;
     width: 100%;
     justify-content: center;
+}
+
+.export-trigger:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 
 .export-caret {
@@ -759,6 +766,21 @@ a.record-tooltip-text:active {
     gap: 16px;
     border-bottom: 1px solid #e5e7eb;
     padding-bottom: 12px;
+}
+
+.domain-details-header-actions {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.domain-details-export-control {
+    width: 140px;
+}
+
+.domain-details-export-control .export-menu {
+    z-index: 10001;
 }
 
 .domain-details-content h2 {
