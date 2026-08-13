@@ -322,9 +322,9 @@ DOMAIN_DETAIL_DISCOVERY_NAMES = {
 }
 
 DOMAIN_DETAIL_DESCRIPTIONS = {
-    "A": "Maps the domain name to IPv4 addresses.",
-    "AAAA": "Maps the domain name to IPv6 addresses.",
-    "CNAME": "Aliases this name to another canonical hostname.",
+    "A": "Linking a name to an IPv4 address.",
+    "AAAA": "Linking a name to an IPv6 address.",
+    "CNAME": "Linking a name to another name record",
     "TXT": "Stores text values used for verification, policy, and service configuration, including SPF and common scoped TXT records.",
     "SPF": "Shows SPF policies found in TXT records, listing which senders may send mail for this domain.",
     "NS": "Lists the authoritative name servers for this domain.",

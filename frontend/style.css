@@ -787,6 +787,14 @@ a.record-tooltip-text:active {
     margin: 0;
 }
 
+.domain-details-note {
+    max-width: 680px;
+    margin: -4px 0 0;
+    color: #4b5563;
+    font-size: 13px;
+    line-height: 1.45;
+}
+
 .domain-details-body {
     overflow: auto;
     padding: 8px 4px 2px;
