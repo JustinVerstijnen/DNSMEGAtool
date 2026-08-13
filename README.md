@@ -6,7 +6,7 @@ DNSMegaTool is a lightweight and web-based domain DNS lookup and security inspec
 
 The main features of this tool are:
 
-- Lookup your domains' email security
+- Lookup your domains' email security and record details
 	- MX
 	- SPF
 	- DKIM
@@ -23,6 +23,16 @@ The main features of this tool are:
 - Scores you based on configuration and used policies
 - Confetti party if all checks pass
 	- Try the domain _justinverstijnen.nl_ for a demo
+- Shows common scoped TXT records in domain details
+- Shows common CNAME records in domain details
+- Exports lookup reports
+	- HTML
+	- JSON
+	- PDF
+- Exports domain details
+	- HTML
+	- JSON
+- Supports bulk domain checks
 - WHOIS information about your domain
 - Displays actual NS servers
 - Give advisories about current record configurations or used policies
@@ -30,6 +40,7 @@ The main features of this tool are:
 ### What the tool doesn't do
 
 - Cache, send or save the information in any way, refreshing means a new lookup
+- Show a complete DNS zone export in the domain details window, because DNS does not provide a generic way to enumerate all records without access to the DNS zone
 
 ## Hosting
 
