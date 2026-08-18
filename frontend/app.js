@@ -1114,7 +1114,19 @@ async function runBulkLookup() {
             const row = document.createElement("tr");
 
             const domainCell = document.createElement("td");
-            domainCell.textContent = domain;
+            const domainName = document.createElement("div");
+            domainName.className = "bulk-domain-name";
+            domainName.textContent = domain;
+            domainCell.appendChild(domainName);
+
+            const registrarName = getRegistrarName(data);
+            if (registrarName) {
+                const registrarLabel = document.createElement("code");
+                registrarLabel.className = "bulk-registrar-label";
+                registrarLabel.textContent = registrarName;
+                registrarLabel.title = `Registrar: ${registrarName}`;
+                domainCell.appendChild(registrarLabel);
+            }
             row.appendChild(domainCell);
 
             for (const col of recordCols) {
@@ -1145,12 +1157,6 @@ async function runBulkLookup() {
                 nsCell.textContent = "";
             }
             row.appendChild(nsCell);
-
-            const registrarCell = document.createElement("td");
-            const registrarName = getRegistrarName(data);
-            registrarCell.textContent = registrarName;
-            registrarCell.title = registrarName;
-            row.appendChild(registrarCell);
 
             if (bulkTbody) bulkTbody.appendChild(row);
 

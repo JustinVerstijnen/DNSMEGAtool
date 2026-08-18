@@ -992,16 +992,32 @@ a.record-tooltip-text:active {
     text-align: left;
 }
 
-#bulkTable td:nth-last-child(2),
-#bulkTable th:nth-last-child(2) {
+#bulkTable td:last-child,
+#bulkTable th:last-child {
     white-space: normal;
     min-width: 260px;
 }
 
-#bulkTable td:last-child,
-#bulkTable th:last-child {
-    white-space: normal;
-    min-width: 220px;
+.bulk-domain-name {
+    font-weight: 600;
+}
+
+.bulk-registrar-label {
+    display: inline-block;
+    max-width: 100%;
+    margin-top: 6px;
+    padding: 3px 6px;
+    overflow: hidden;
+    color: #334155;
+    background: #eef2f7;
+    border: 1px solid #d8e1ed;
+    border-radius: 4px;
+    font-family: Consolas, 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    vertical-align: top;
+    white-space: nowrap;
 }
 
 body::before {
