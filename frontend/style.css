@@ -261,6 +261,33 @@ button svg {
     overflow-y: clip;
 }
 
+.progress-text {
+    width: min(50%, 420px);
+    min-width: 280px;
+    margin: 8px auto 8px;
+    color: #374151;
+    font-weight: 600;
+    text-align: center;
+}
+
+.bulk-progress-bar {
+    width: min(50%, 420px);
+    min-width: 280px;
+    height: 8px;
+    margin: 0 auto 18px;
+    overflow: hidden;
+    background: #e8eef7;
+    border-radius: 999px;
+}
+
+.bulk-progress-fill {
+    width: 0%;
+    height: 100%;
+    background: #2f7dd3;
+    border-radius: inherit;
+    transition: width 0.24s ease;
+}
+
 table {
     width: 100%;
     table-layout: fixed;
@@ -892,6 +919,12 @@ a.record-tooltip-text:active {
 
 @media (max-width: 700px) {
     input[type="text"] {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .progress-text,
+    .bulk-progress-bar {
         width: 100%;
         min-width: 0;
     }

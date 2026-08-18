@@ -217,6 +217,38 @@ function getRegistrarName(data) {
     return formatWhoisValue(registrar);
 }
 
+function setBulkProgress(processed, total) {
+    const bulkProgressText = document.getElementById("bulkProgressText");
+    const bulkProgressBar = document.getElementById("bulkProgressBar");
+    const bulkProgressFill = document.getElementById("bulkProgressFill");
+    const percent = total > 0 ? Math.round((processed / total) * 100) : 0;
+
+    if (bulkProgressText) {
+        bulkProgressText.style.display = "block";
+        bulkProgressText.textContent = `${processed}/${total} domains processed...`;
+    }
+
+    if (bulkProgressBar) {
+        bulkProgressBar.style.display = "block";
+        bulkProgressBar.setAttribute("aria-valuenow", String(percent));
+        bulkProgressBar.setAttribute("aria-label", `${processed} of ${total} domains processed`);
+    }
+
+    if (bulkProgressFill) {
+        bulkProgressFill.style.width = `${percent}%`;
+    }
+}
+
+function hideBulkProgress() {
+    const bulkProgressText = document.getElementById("bulkProgressText");
+    const bulkProgressBar = document.getElementById("bulkProgressBar");
+    const bulkProgressFill = document.getElementById("bulkProgressFill");
+
+    if (bulkProgressText) bulkProgressText.style.display = "none";
+    if (bulkProgressBar) bulkProgressBar.style.display = "none";
+    if (bulkProgressFill) bulkProgressFill.style.width = "0%";
+}
+
 async function openDomainDetailsModal() {
     const domain = lastCheckedDomain || normalizeDomain(document.getElementById("domainInput").value);
     if (!isValidDomain(domain)) {
@@ -1047,7 +1079,6 @@ async function runBulkLookup() {
     const loader = document.getElementById("loader");
     const resultsSection = document.getElementById("resultsSection");
     const bulkResultsSection = document.getElementById("bulkResultsSection");
-    const bulkProgressText = document.getElementById("bulkProgressText");
     const bulkTbody = document.querySelector("#bulkTable tbody");
 
     // Hide single results and show the bulk table immediately so rows can stream in.
@@ -1058,10 +1089,7 @@ async function runBulkLookup() {
 
     // Reset bulk table
     if (bulkTbody) bulkTbody.innerHTML = "";
-    if (bulkProgressText) {
-        bulkProgressText.style.display = "block";
-        bulkProgressText.textContent = `0/${uniqueDomains.length} processed...`;
-    }
+    setBulkProgress(0, uniqueDomains.length);
 
     const recordCols = recordOrder;
 
@@ -1126,9 +1154,7 @@ async function runBulkLookup() {
 
             if (bulkTbody) bulkTbody.appendChild(row);
 
-            if (bulkProgressText) {
-                bulkProgressText.textContent = `${i + 1}/${uniqueDomains.length} processed...`;
-            }
+            setBulkProgress(i + 1, uniqueDomains.length);
         }
     } finally {
         loader.style.display = "none";
@@ -1138,7 +1164,7 @@ async function runBulkLookup() {
         if (bulkBtn) bulkBtn.disabled = false;
         if (bulkRunBtn) bulkRunBtn.disabled = false;
 
-        if (bulkProgressText) bulkProgressText.style.display = "none";
+        hideBulkProgress();
         if (bulkResultsSection) bulkResultsSection.style.display = "block";
         setExportMenuVisible(true);
     }
