@@ -1050,11 +1050,11 @@ async function runBulkLookup() {
     const bulkProgressText = document.getElementById("bulkProgressText");
     const bulkTbody = document.querySelector("#bulkTable tbody");
 
-    // Hide single results, show loader
+    // Hide single results and show the bulk table immediately so rows can stream in.
     resultsSection.style.display = "none";
     setExportMenuVisible(false);
-    if (bulkResultsSection) bulkResultsSection.style.display = "none";
-    loader.style.display = "flex";
+    if (bulkResultsSection) bulkResultsSection.style.display = "block";
+    loader.style.display = "none";
 
     // Reset bulk table
     if (bulkTbody) bulkTbody.innerHTML = "";
