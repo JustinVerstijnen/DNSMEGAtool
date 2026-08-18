@@ -1112,6 +1112,7 @@ async function runBulkLookup() {
             lastBulkResults.push(bulkExportRow);
 
             const row = document.createElement("tr");
+            row.className = "bulk-row-enter";
 
             const domainCell = document.createElement("td");
             const domainName = document.createElement("div");

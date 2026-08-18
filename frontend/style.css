@@ -283,9 +283,24 @@ button svg {
 .bulk-progress-fill {
     width: 0%;
     height: 100%;
-    background: #2f7dd3;
+    background: #8EAFDA;
     border-radius: inherit;
     transition: width 0.24s ease;
+}
+
+@keyframes bulkRowEnter {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.bulk-row-enter {
+    animation: bulkRowEnter 0.28s ease both;
 }
 
 table {
@@ -971,7 +986,9 @@ a.record-tooltip-text:active {
     .bulk-modal .modal-content,
     .details-modal,
     .details-modal .domain-details-content,
+    .bulk-row-enter,
     .export-menu {
+        animation: none;
         transition: none;
         transform: none;
     }
