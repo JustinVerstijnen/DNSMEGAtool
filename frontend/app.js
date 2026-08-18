@@ -189,14 +189,32 @@ function openBulkModal() {
     const bulkTextarea = document.getElementById("bulkTextarea");
     if (!bulkModal || !bulkTextarea) return;
 
+    bulkModal.classList.remove("modal-closing");
     bulkModal.style.display = "flex";
+    requestAnimationFrame(() => bulkModal.classList.add("modal-open"));
     setTimeout(() => bulkTextarea.focus(), 0);
 }
 
 function closeBulkModal() {
     const bulkModal = document.getElementById("bulkModal");
     if (!bulkModal) return;
-    bulkModal.style.display = "none";
+    if (bulkModal.style.display === "none") return;
+
+    bulkModal.classList.remove("modal-open");
+    bulkModal.classList.add("modal-closing");
+
+    window.setTimeout(() => {
+        if (!bulkModal.classList.contains("modal-open")) {
+            bulkModal.style.display = "none";
+            bulkModal.classList.remove("modal-closing");
+        }
+    }, detailsModalAnimationMs);
+}
+
+function getRegistrarName(data) {
+    const registrar = data?.WHOIS?.registrar;
+    if (!registrar || (Array.isArray(registrar) && registrar.length === 0)) return "";
+    return formatWhoisValue(registrar);
 }
 
 async function openDomainDetailsModal() {
@@ -750,7 +768,7 @@ function serializeBulkLookupForJsonExport(domain, data) {
         advisories: dnsServers.length > 0 ? [] : ["No DNS servers found"]
     };
 
-    return { domain, records };
+    return { domain, registrar: getRegistrarName(data), records };
 }
 
 function appendRecordValueLines(listItem, value) {
@@ -1099,6 +1117,12 @@ async function runBulkLookup() {
                 nsCell.textContent = "";
             }
             row.appendChild(nsCell);
+
+            const registrarCell = document.createElement("td");
+            const registrarName = getRegistrarName(data);
+            registrarCell.textContent = registrarName;
+            registrarCell.title = registrarName;
+            row.appendChild(registrarCell);
 
             if (bulkTbody) bulkTbody.appendChild(row);
 
