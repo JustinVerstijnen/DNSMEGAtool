@@ -20,6 +20,20 @@ from datetime import datetime, timezone
 # Function settings
 app = func.FunctionApp()
 
+def float_env(name, default):
+    try:
+        return float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+def configure_default_dns_resolver():
+    resolver = dns.resolver.Resolver()
+    resolver.timeout = float_env("DNS_QUERY_TIMEOUT", 1.5)
+    resolver.lifetime = float_env("DNS_QUERY_LIFETIME", 3.0)
+    dns.resolver.default_resolver = resolver
+
+configure_default_dns_resolver()
+
 DEFAULT_DNSBL_ZONES = [
     "zen.spamhaus.org",
     "bl.spamcop.net",
@@ -288,6 +302,49 @@ def scoped_txt_advisories(record_type, scoped, base_advisory=None):
 def record_not_found(record_type, domain):
     return f"{record_type} record not found: {domain}"
 
+def is_dns_resolution_failure(error):
+    return isinstance(error, (dns.resolver.NoNameservers, dns.exception.Timeout))
+
+def dns_failure_message(domain, error):
+    return f"DNS lookup failed for {domain}: {str(error)}"
+
+def get_domain_dns_resolution_failure(domain):
+    for record_type in ("SOA", "NS"):
+        try:
+            dns.resolver.resolve(domain, record_type, lifetime=2)
+            return None
+        except dns.resolver.NoAnswer:
+            continue
+        except dns.resolver.NXDOMAIN:
+            return None
+        except Exception as error:
+            if is_dns_resolution_failure(error):
+                return dns_failure_message(domain, error)
+            return dns_failure_message(domain, error)
+    return None
+
+def dns_unavailable_advisory():
+    return (
+        "The domain DNS is currently returning SERVFAIL or timing out, so records "
+        "cannot be validated. Check DNSSEC delegation, authoritative nameservers, "
+        "and zone health."
+    )
+
+def build_dns_failure_lookup_payload(domain, message):
+    advisory = dns_unavailable_advisory()
+    return {
+        "MX": make_record(False, message, [advisory], level="error"),
+        "SPF": make_record(False, message, [advisory], level="error"),
+        "DKIM": make_record(False, message, [advisory], level="error"),
+        "DMARC": make_record(False, message, [advisory], level="error"),
+        "TLS-RPT": make_record(False, message, [advisory], level="warning"),
+        "DNSSEC": make_record(False, message, [advisory], level="error"),
+        "DANE": make_record(False, "No MX host available for DANE check", [advisory], level="error"),
+        "MTA-STS": make_record(False, message, [advisory], level="warning"),
+        "NS": [],
+        "WHOIS": empty_whois_payload(domain, "dns_error", message),
+    }
+
 def txt_record_values(records):
     return ["".join([b.decode("utf-8") for b in r.strings]) for r in records]
 
@@ -460,6 +517,15 @@ def empty_domain_detail_section(record_type, message=None, name=None):
         "ttl_display": None,
         "name": name,
         "message": message or f"No {record_type} records found.",
+    }
+
+def build_dns_failure_domain_details_payload(domain, message):
+    return {
+        "domain": domain,
+        "sections": [
+            empty_domain_detail_section(record_type, message, name=domain)
+            for record_type in DOMAIN_DETAIL_RECORD_TYPES
+        ],
     }
 
 def resolve_domain_detail_section(domain, record_type, display_type=None):
@@ -991,6 +1057,13 @@ def domain_details(req: func.HttpRequest) -> func.HttpResponse:
     if not re.match(r"^(?!-)([a-z0-9-]{1,63}(?<!-)\.)+[a-z]{2,}$", domain):
         return func.HttpResponse("Please pass a valid domain", status_code=400)
 
+    dns_failure = get_domain_dns_resolution_failure(domain)
+    if dns_failure:
+        return func.HttpResponse(
+            json.dumps(build_dns_failure_domain_details_payload(domain, dns_failure)),
+            mimetype="application/json"
+        )
+
     sections_by_type = {}
     for record_type in DOMAIN_DETAIL_RECORD_TYPES:
         section = resolve_domain_detail_section(domain, record_type)
@@ -1014,6 +1087,17 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
     domain = req.params.get('domain')
     if not domain:
         return func.HttpResponse("Please pass a domain on the query string", status_code=400)
+
+    domain = clean_dns_name(domain.strip().lower())
+    if not re.match(r"^(?!-)([a-z0-9-]{1,63}(?<!-)\.)+[a-z]{2,}$", domain):
+        return func.HttpResponse("Please pass a valid domain", status_code=400)
+
+    dns_failure = get_domain_dns_resolution_failure(domain)
+    if dns_failure:
+        return func.HttpResponse(
+            json.dumps(build_dns_failure_lookup_payload(domain, dns_failure)),
+            mimetype="application/json"
+        )
 
     results = {}
     mx_hosts = []
