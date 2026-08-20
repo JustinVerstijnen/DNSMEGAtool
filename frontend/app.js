@@ -249,6 +249,10 @@ function hideBulkProgress() {
     if (bulkProgressFill) bulkProgressFill.style.width = "0%";
 }
 
+function isStandaloneLookupNotice(data) {
+    return ["available", "dns_refused", "dns_error"].includes(data?.WHOIS?.lookup_status);
+}
+
 async function openDomainDetailsModal() {
     const domain = lastCheckedDomain || normalizeDomain(document.getElementById("domainInput").value);
     if (!isValidDomain(domain)) {
@@ -470,6 +474,7 @@ async function checkDomain() {
     const tbody = document.querySelector("#resultTable tbody");
     const resultTableWrapper = document.querySelector("#resultTable")?.closest(".table-wrapper");
     const extraInfo = document.getElementById("extraInfo");
+    let showDetailsButton = false;
 
     // Reset views
     if (bulkResultsSection) bulkResultsSection.style.display = "none";
@@ -487,10 +492,11 @@ async function checkDomain() {
         if (!response.ok) throw new Error(`Lookup failed with status ${response.status}`);
         const data = await response.json();
         lastCheckedDomain = domain;
-        const domainIsAvailable = data.WHOIS?.lookup_status === "available";
-        if (resultTableWrapper) resultTableWrapper.style.display = domainIsAvailable ? "none" : "";
+        const standaloneLookupNotice = isStandaloneLookupNotice(data);
+        showDetailsButton = Boolean(lastCheckedDomain && !standaloneLookupNotice);
+        if (resultTableWrapper) resultTableWrapper.style.display = standaloneLookupNotice ? "none" : "";
 
-        if (!domainIsAvailable) {
+        if (!standaloneLookupNotice) {
             // Fill the table
             for (const type of recordOrder) {
                 const record = data[type];
@@ -534,7 +540,7 @@ async function checkDomain() {
         }
 
         // Extra info: Nameservers (API returns an array)
-        if (!domainIsAvailable && data.NS) {
+        if (!standaloneLookupNotice && data.NS) {
             const nsBox = document.createElement("div");
             nsBox.className = "infobox";
             const listItems = Array.isArray(data.NS) ? data.NS.map((ns) => `<li>${ns}</li>`).join("") : "";
@@ -548,7 +554,9 @@ async function checkDomain() {
             whoisBox.className = "infobox";
 
             const whoisTitle = document.createElement("h3");
-            whoisTitle.textContent = `WHOIS Information for ${domain}:`;
+            whoisTitle.textContent = data.WHOIS?.lookup_status?.startsWith("dns_")
+                ? `DNS lookup for ${domain}:`
+                : `WHOIS Information for ${domain}:`;
             whoisBox.appendChild(whoisTitle);
 
             const whoisMessage = createWhoisMessage(data.WHOIS);
@@ -568,7 +576,7 @@ async function checkDomain() {
 
         resultsSection.style.display = "block";
         setExportMenuVisible(true);
-        if (detailsBtn && lastCheckedDomain) detailsBtn.style.display = "inline-flex";
+        if (detailsBtn && showDetailsButton) detailsBtn.style.display = "inline-flex";
     }
 }
 
@@ -978,6 +986,25 @@ function createWhoisMessage(whoisData) {
         strong.textContent = "free";
         text.appendChild(strong);
         text.appendChild(document.createTextNode(" and available for registration."));
+    } else if (whoisData?.lookup_status === "dns_refused") {
+        text.appendChild(document.createTextNode("The DNS servers "));
+        const strong = document.createElement("strong");
+        strong.textContent = "refused";
+        text.appendChild(strong);
+        text.appendChild(document.createTextNode(" the lookup request for this domain."));
+        if (whoisData.technical_message) {
+            text.appendChild(document.createElement("br"));
+            text.appendChild(document.createTextNode(whoisData.technical_message));
+        }
+    } else if (whoisData?.lookup_status === "dns_error") {
+        text.appendChild(document.createTextNode("The DNS records could not be checked for this domain."));
+        if (whoisData.technical_message && whoisData.technical_message !== message) {
+            text.appendChild(document.createElement("br"));
+            text.appendChild(document.createTextNode(whoisData.technical_message));
+        } else {
+            text.appendChild(document.createElement("br"));
+            text.appendChild(document.createTextNode(message));
+        }
     } else {
         text.textContent = message;
     }

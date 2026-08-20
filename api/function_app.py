@@ -1,8 +1,12 @@
 # Module imports
 import azure.functions as func
 import json
+import dns.message
+import dns.query
 import dns.resolver
 import dns.exception
+import dns.rcode
+import dns.rdatatype
 import requests
 import whois
 import smtplib
@@ -308,6 +312,71 @@ def is_dns_resolution_failure(error):
 def dns_failure_message(domain, error):
     return f"DNS lookup failed for {domain}: {str(error)}"
 
+def dns_refused_message(domain, nameservers):
+    ns_list = ", ".join(nameservers) if nameservers else "the authoritative DNS servers"
+    return f"The DNS servers refused lookup requests for {domain}: {ns_list}"
+
+def get_parent_domain(domain):
+    labels = clean_dns_name(domain).split(".", 1)
+    return labels[1] if len(labels) > 1 else None
+
+def resolve_nameserver_addresses(nameserver):
+    addresses = []
+    for record_type in ("A", "AAAA"):
+        try:
+            for answer in dns.resolver.resolve(nameserver, record_type, lifetime=2):
+                addresses.append(str(answer))
+        except Exception:
+            continue
+    return addresses
+
+def query_nameserver(address, name, record_type, timeout=2):
+    query = dns.message.make_query(name, record_type)
+    return dns.query.udp(query, address, timeout=timeout)
+
+def get_delegated_nameservers(domain):
+    parent = get_parent_domain(domain)
+    if not parent:
+        return []
+
+    delegated = []
+    try:
+        parent_nameservers = [clean_dns_name(record.target) for record in dns.resolver.resolve(parent, "NS", lifetime=2)]
+    except Exception:
+        return delegated
+
+    for parent_ns in parent_nameservers:
+        for address in resolve_nameserver_addresses(parent_ns):
+            try:
+                response = query_nameserver(address, domain, dns.rdatatype.NS)
+            except Exception:
+                continue
+            if response.rcode() != dns.rcode.NOERROR:
+                continue
+            for rrset in list(response.answer) + list(response.authority):
+                if rrset.rdtype != dns.rdatatype.NS:
+                    continue
+                for item in rrset:
+                    nameserver = clean_dns_name(item.target)
+                    if nameserver not in delegated:
+                        delegated.append(nameserver)
+            if delegated:
+                return delegated
+    return delegated
+
+def get_refusing_authoritative_nameservers(domain):
+    refusing = []
+    for nameserver in get_delegated_nameservers(domain):
+        for address in resolve_nameserver_addresses(nameserver):
+            try:
+                response = query_nameserver(address, domain, dns.rdatatype.SOA)
+            except Exception:
+                continue
+            if response.rcode() == dns.rcode.REFUSED:
+                refusing.append(nameserver)
+                break
+    return refusing
+
 def get_domain_dns_resolution_failure(domain):
     for record_type in ("SOA", "NS"):
         try:
@@ -318,20 +387,47 @@ def get_domain_dns_resolution_failure(domain):
         except dns.resolver.NXDOMAIN:
             return None
         except Exception as error:
+            refusing_nameservers = get_refusing_authoritative_nameservers(domain)
+            if refusing_nameservers:
+                return {
+                    "status": "dns_refused",
+                    "message": dns_refused_message(domain, refusing_nameservers),
+                    "technical_message": dns_failure_message(domain, error),
+                }
             if is_dns_resolution_failure(error):
-                return dns_failure_message(domain, error)
-            return dns_failure_message(domain, error)
+                return {
+                    "status": "dns_error",
+                    "message": dns_failure_message(domain, error),
+                    "technical_message": dns_failure_message(domain, error),
+                }
+            return {
+                "status": "dns_error",
+                "message": dns_failure_message(domain, error),
+                "technical_message": dns_failure_message(domain, error),
+            }
     return None
 
-def dns_unavailable_advisory():
+def dns_unavailable_advisory(status):
+    if status == "dns_refused":
+        return (
+            "The authoritative DNS servers refused lookup requests for this domain. "
+            "Check whether the domain is active in the DNS provider account and whether "
+            "the delegated nameservers match the zone configuration."
+        )
     return (
         "The domain DNS is currently returning SERVFAIL or timing out, so records "
         "cannot be validated. Check DNSSEC delegation, authoritative nameservers, "
         "and zone health."
     )
 
-def build_dns_failure_lookup_payload(domain, message):
-    advisory = dns_unavailable_advisory()
+def build_dns_failure_lookup_payload(domain, failure):
+    status = failure.get("status", "dns_error")
+    message = failure.get("message")
+    technical_message = failure.get("technical_message") or message
+    advisory = dns_unavailable_advisory(status)
+    whois = empty_whois_payload(domain, status, message)
+    whois["technical_message"] = technical_message
+
     return {
         "MX": make_record(False, message, [advisory], level="error"),
         "SPF": make_record(False, message, [advisory], level="error"),
@@ -342,7 +438,7 @@ def build_dns_failure_lookup_payload(domain, message):
         "DANE": make_record(False, "No MX host available for DANE check", [advisory], level="error"),
         "MTA-STS": make_record(False, message, [advisory], level="warning"),
         "NS": [],
-        "WHOIS": empty_whois_payload(domain, "dns_error", message),
+        "WHOIS": whois,
     }
 
 def txt_record_values(records):
@@ -519,7 +615,8 @@ def empty_domain_detail_section(record_type, message=None, name=None):
         "message": message or f"No {record_type} records found.",
     }
 
-def build_dns_failure_domain_details_payload(domain, message):
+def build_dns_failure_domain_details_payload(domain, failure):
+    message = failure.get("technical_message") or failure.get("message")
     return {
         "domain": domain,
         "sections": [
