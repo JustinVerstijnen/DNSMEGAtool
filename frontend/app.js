@@ -253,6 +253,40 @@ function isStandaloneLookupNotice(data) {
     return ["available", "dns_refused", "dns_error"].includes(data?.WHOIS?.lookup_status);
 }
 
+function createMicrosoftTenantBox(tenantData, domain) {
+    if (!tenantData?.detected || !tenantData.tenant_id) return null;
+
+    const box = document.createElement("div");
+    box.className = "infobox tenant-infobox";
+
+    const title = document.createElement("h3");
+    title.textContent = "Microsoft 365 tenant detected";
+    box.appendChild(title);
+
+    const tenantRow = document.createElement("div");
+    tenantRow.className = "tenant-id-row";
+
+    const label = document.createElement("strong");
+    label.textContent = "Tenant ID: ";
+    tenantRow.appendChild(label);
+
+    const tenantId = document.createElement("code");
+    tenantId.textContent = tenantData.tenant_id;
+    tenantRow.appendChild(tenantId);
+
+    box.appendChild(tenantRow);
+
+    const detectedDomain = tenantData.domain || domain;
+    if (detectedDomain) {
+        const domainLine = document.createElement("div");
+        domainLine.className = "tenant-domain-line";
+        domainLine.textContent = `Detected for ${detectedDomain}`;
+        box.appendChild(domainLine);
+    }
+
+    return box;
+}
+
 async function openDomainDetailsModal() {
     const domain = lastCheckedDomain || normalizeDomain(document.getElementById("domainInput").value);
     if (!isValidDomain(domain)) {
@@ -537,6 +571,12 @@ async function checkDomain() {
                     origin: { y: 0.6 },
                 });
             }
+        }
+
+        // Extra info: Microsoft 365 tenant
+        if (!standaloneLookupNotice) {
+            const tenantBox = createMicrosoftTenantBox(data.TENANT, domain);
+            if (tenantBox) extraInfo.appendChild(tenantBox);
         }
 
         // Extra info: Nameservers (API returns an array)

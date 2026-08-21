@@ -17,6 +17,7 @@ The main features of this tool are:
 	- DANE
 	- MX SSL certificate validity
 - Checks if MX record is on a active blacklist, impacting email deliverability
+- Detects Microsoft 365 tenants and shows the Tenant ID
 - Checks the actual configuration
 - Shows how many days are left on the MX SSL certificate
 - Shows advisories for weak or inconsistent mail security configuration

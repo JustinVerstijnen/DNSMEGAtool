@@ -444,6 +444,54 @@ def build_dns_failure_lookup_payload(domain, failure):
 def txt_record_values(records):
     return ["".join([b.decode("utf-8") for b in r.strings]) for r in records]
 
+def extract_tenant_id_from_microsoft_discovery(discovery):
+    for key in ("issuer", "token_endpoint", "authorization_endpoint", "jwks_uri"):
+        value = str(discovery.get(key) or "")
+        match = re.search(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            value
+        )
+        if match:
+            return match.group(0).lower()
+    return None
+
+def lookup_microsoft_365_tenant(domain):
+    timeout = float_env("MICROSOFT_TENANT_LOOKUP_TIMEOUT", 4.0)
+    url = f"https://login.microsoftonline.com/{domain}/v2.0/.well-known/openid-configuration"
+
+    payload = {
+        "detected": False,
+        "tenant_id": None,
+        "domain": domain,
+        "issuer": None,
+        "lookup_status": "not_detected",
+        "lookup_message": None,
+    }
+
+    try:
+        response = requests.get(url, timeout=timeout, allow_redirects=True)
+        if response.status_code in (400, 404):
+            return payload
+        response.raise_for_status()
+        discovery = response.json()
+        tenant_id = extract_tenant_id_from_microsoft_discovery(discovery)
+        if not tenant_id:
+            payload["lookup_status"] = "unknown_response"
+            payload["lookup_message"] = "Microsoft tenant discovery did not return a Tenant ID."
+            return payload
+
+        payload.update({
+            "detected": True,
+            "tenant_id": tenant_id,
+            "issuer": discovery.get("issuer"),
+            "lookup_status": "found",
+        })
+        return payload
+    except Exception as exc:
+        payload["lookup_status"] = "lookup_error"
+        payload["lookup_message"] = f"Microsoft tenant discovery failed: {str(exc)}"
+        return payload
+
 DOMAIN_DETAIL_RECORD_TYPES = ["A", "AAAA", "CNAME", "TXT", "NS", "MX", "SOA", "CAA", "DS", "DNSKEY"]
 
 DOMAIN_DETAIL_DISCOVERY_NAMES = {
@@ -1227,6 +1275,9 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
         results['MX'] = make_record(False, record_not_found("MX", domain))
     except Exception as e:
         results['MX'] = make_record(False, str(e))
+
+    # Microsoft 365 / Entra tenant lookup
+    results["TENANT"] = lookup_microsoft_365_tenant(domain)
 
     # SPF lookup (TXT record)
     try:
