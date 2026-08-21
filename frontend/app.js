@@ -263,18 +263,39 @@ function createMicrosoftTenantBox(tenantData, domain) {
     title.textContent = "Microsoft 365 tenant detected";
     box.appendChild(title);
 
-    const tenantRow = document.createElement("div");
-    tenantRow.className = "tenant-id-row";
+    const details = document.createElement("dl");
+    details.className = "tenant-details";
 
-    const label = document.createElement("strong");
-    label.textContent = "Tenant ID: ";
-    tenantRow.appendChild(label);
+    function appendTenantDetail(label, value, options = {}) {
+        const term = document.createElement("dt");
+        term.textContent = label;
+        details.appendChild(term);
 
-    const tenantId = document.createElement("code");
-    tenantId.textContent = tenantData.tenant_id;
-    tenantRow.appendChild(tenantId);
+        const description = document.createElement("dd");
+        if (options.code) {
+            const code = document.createElement("code");
+            code.textContent = value;
+            description.appendChild(code);
+        } else if (options.link) {
+            const link = document.createElement("a");
+            link.href = value;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.textContent = value;
+            description.appendChild(link);
+        } else {
+            description.textContent = value;
+        }
+        details.appendChild(description);
+    }
 
-    box.appendChild(tenantRow);
+    appendTenantDetail("Tenant ID", tenantData.tenant_id, { code: true });
+    appendTenantDetail("Location", "Global (Worldwide)");
+
+    const issuer = tenantData.issuer || `https://login.microsoftonline.com/${tenantData.tenant_id}/v2.0`;
+    appendTenantDetail("Issuer", issuer, { link: true });
+
+    box.appendChild(details);
 
     const detectedDomain = tenantData.domain || domain;
     if (detectedDomain) {

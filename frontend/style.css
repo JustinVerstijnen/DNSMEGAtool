@@ -445,7 +445,24 @@ tbody tr:nth-child(even):not(.status-row) {
     margin-top: 0;
 }
 
-.tenant-id-row code {
+.tenant-details {
+    display: grid;
+    grid-template-columns: minmax(110px, max-content) minmax(0, 1fr);
+    gap: 8px 14px;
+    margin: 0;
+}
+
+.tenant-details dt {
+    font-weight: 700;
+}
+
+.tenant-details dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.tenant-details code {
     display: inline-block;
     max-width: 100%;
     padding: 3px 6px;
@@ -457,10 +474,26 @@ tbody tr:nth-child(even):not(.status-row) {
     overflow-wrap: anywhere;
 }
 
+.tenant-details a {
+    color: #1f5f9f;
+    overflow-wrap: anywhere;
+}
+
 .tenant-domain-line {
-    margin-top: 6px;
+    margin-top: 10px;
     color: #4b5563;
     font-size: 13px;
+}
+
+@media (max-width: 560px) {
+    .tenant-details {
+        grid-template-columns: 1fr;
+        gap: 3px;
+    }
+
+    .tenant-details dd {
+        margin-bottom: 8px;
+    }
 }
 
 ul {
