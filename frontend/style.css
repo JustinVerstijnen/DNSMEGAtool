@@ -128,6 +128,14 @@ button svg {
     min-width: 0;
 }
 
+#checkBtn {
+    background-color: #77B0DE;
+}
+
+#checkBtn:hover {
+    background-color: #669fce;
+}
+
 .spinner-container {
     position: relative;
     left: 50%;
