@@ -35,7 +35,7 @@ The main features of this tool are:
 	- JSON
 - Supports bulk domain checks
 - WHOIS information about your domain
-- Displays actual NS servers
+- Displays actual NS servers for domain
 - Give advisories about current record configurations or used policies
 
 ### What the tool doesn't do
