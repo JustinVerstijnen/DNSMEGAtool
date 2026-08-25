@@ -73,6 +73,4 @@ At this moment, this tool has no known issues.
 
 ## License
 
-This project is licensed under the **MIT license**. This means that the software is open source and can be used to run the tool yourself.
-
-Use at your own risk. No guarantees or official support are provided.
+This project is licensed under the **MIT license**. This means that the software is open source and can be used to run the tool yourself. Use at your own risk. No guarantees or official support are provided.
