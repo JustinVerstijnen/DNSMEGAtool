@@ -928,6 +928,17 @@ def rdap_payload(domain, data):
     payload = empty_whois_payload(domain, "found", "The registry confirms this domain is registered.")
     payload["status"] = data.get("status")
     payload["quarantined"] = is_quarantined(payload["status"])
+    # SIDN publishes "pending delete" in RDAP and the specific state in WHOIS.
+    if domain.endswith(".nl") and "pending delete" in (payload["status"] or []):
+        try:
+            sidn = registry_whois(domain, server="whois.domain-registry.nl")
+            if sidn and sidn.get("quarantined"):
+                payload["quarantined"] = True
+                payload["status"] = ["in quarantine (SIDN WHOIS)"] + [
+                    f"{status} (RDAP)" for status in data["status"]
+                ]
+        except OSError:
+            pass
     payload["administrative_contact"] = get_rdap_administrative_contacts(data)
     date_fields = {"registration": "creation_date", "last changed": "updated_date", "expiration": "expiration_date"}
     for event in data.get("events", []):
@@ -956,13 +967,14 @@ def query_whois(server, name):
             return stream.read(262144).decode("utf-8", errors="replace")
 
 
-def registry_whois(domain):
-    tld = domain.rsplit(".", 1)[1]
-    referral = query_whois("whois.iana.org", tld)
-    match = re.search(r"^whois:[ \t]*([\w.-]+)[ \t]*$", referral.replace("\r", ""), re.I | re.M)
-    if not match:
-        return None
-    server = match.group(1)
+def registry_whois(domain, server=None):
+    if server is None:
+        tld = domain.rsplit(".", 1)[1]
+        referral = query_whois("whois.iana.org", tld)
+        match = re.search(r"^whois:[ \t]*([\w.-]+)[ \t]*$", referral.replace("\r", ""), re.I | re.M)
+        if not match:
+            return None
+        server = match.group(1)
     raw = query_whois(server, domain)
     lines = [line.strip() for line in raw.splitlines()]
     if any(line.lower() == f"{domain} is free" for line in lines):
