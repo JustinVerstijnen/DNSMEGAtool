@@ -644,20 +644,7 @@ async function checkDomain() {
         }
         // Extra info: WHOIS (API returns registrar/contact/date fields or error)
         if (data.WHOIS) {
-            const whoisBox = document.createElement("div");
-            whoisBox.className = "infobox";
-
-            const whoisTitle = document.createElement("h3");
-            whoisTitle.textContent = data.WHOIS?.lookup_status?.startsWith("dns_")
-                ? `DNS lookup for ${domain}:`
-                : `WHOIS Information for ${domain}:`;
-            whoisBox.appendChild(whoisTitle);
-
-            const whoisMessage = createWhoisMessage(data.WHOIS);
-            if (whoisMessage) whoisBox.appendChild(whoisMessage);
-            whoisBox.appendChild(createWhoisList(data.WHOIS));
-
-            extraInfo.appendChild(whoisBox);
+            extraInfo.appendChild(createWhoisOverview(domain, data.WHOIS));
         }
     } catch (e) {
         console.error(e);
@@ -1064,10 +1051,6 @@ function formatWhoisValue(value) {
     return String(value);
 }
 
-function appendValue(target, value) {
-    target.appendChild(document.createTextNode(formatWhoisValue(value)));
-}
-
 function createWhoisMessage(whoisData) {
     const message = whoisData?.lookup_message || whoisData?.error;
     if (!message) return null;
@@ -1105,8 +1088,19 @@ function createWhoisMessage(whoisData) {
     return text;
 }
 
-function createWhoisList(whoisData) {
-    const list = document.createElement("ul");
+function createWhoisOverview(domain, whoisData) {
+    const view = document.getElementById("whoisTemplate").content.cloneNode(true);
+    view.querySelector("caption small").textContent = domain;
+    if (whoisData.lookup_status?.startsWith("dns_")) {
+        view.querySelector("caption span").textContent = "DNS lookup";
+    }
+    const body = view.querySelector("tbody");
+    const message = createWhoisMessage(whoisData);
+    if (message) {
+        const cell = body.insertRow().insertCell();
+        cell.colSpan = 2;
+        cell.append(message);
+    }
     const order = [
         "domain_name",
         "registrar",
@@ -1131,21 +1125,16 @@ function createWhoisList(whoisData) {
         const value = whoisData[key];
         if (!value || (Array.isArray(value) && value.length === 0)) continue;
 
-        const item = document.createElement("li");
-        const label = document.createElement("strong");
-        label.textContent = `${formatWhoisLabel(key)}: `;
-        item.appendChild(label);
-        appendValue(item, value);
-        list.appendChild(item);
+        const row = body.insertRow();
+        row.insertCell().textContent = formatWhoisLabel(key);
+        row.insertCell().textContent = formatWhoisValue(value);
     }
-
-    if (!list.children.length) {
-        const item = document.createElement("li");
-        item.textContent = whoisData?.lookup_message || whoisData?.error || "No public WHOIS details found.";
-        list.appendChild(item);
+    if (!body.rows.length) {
+        const cell = body.insertRow().insertCell();
+        cell.colSpan = 2;
+        cell.textContent = "No public WHOIS details found.";
     }
-
-    return list;
+    return view;
 }
 
 async function runBulkLookup() {
@@ -1340,7 +1329,7 @@ function getCurrentExportContext() {
         templateFile = "export-template-bulk.html";
     } else {
         table = document.querySelector("#resultTable");
-        const domain = normalizeDomain(document.getElementById("domainInput").value);
+        const domain = lastCheckedDomain || normalizeDomain(document.getElementById("domainInput").value);
         if (!isValidDomain(domain)) {
             alert("The input does not appear to be a valid domain. Please check your entry.");
             return null;
@@ -1355,19 +1344,33 @@ function getCurrentExportContext() {
 }
 
 async function buildExportHtml(context) {
-    let tableHTML = "";
-    if (context.table) {
-        const clone = context.table.cloneNode(true);
-        tableHTML = clone.outerHTML;
+    const isSingle = context.table?.id === "resultTable";
+    const parts = [];
+    if (isSingle) {
+        const warning = document.getElementById("singleQuarantine");
+        if (!warning.hidden) parts.push(warning.outerHTML);
     }
-
-    const template = await fetch(context.templateFile).then((r) => r.text());
-
+    if (context.table && context.table.closest(".table-wrapper")?.style.display !== "none") {
+        parts.push(context.table.outerHTML);
+    }
+    if (isSingle) {
+        for (const section of document.querySelectorAll("#extraInfo > .lookup-overview, #extraInfo > .whois-message")) {
+            parts.push(section.outerHTML);
+        }
+    }
+    const files = [context.templateFile];
+    if (isSingle) files.push("lookup-tables.css");
+    const [template, styles] = await Promise.all(files.map(async (file) => {
+        const response = await fetch(file);
+        if (!response.ok) throw new Error(`Could not load ${file}`);
+        return response.text();
+    }));
     return template
+        .replace("/* lookup-table-styles */", () => styles || "")
         .replaceAll("{{domain}}", context.label)
         .replaceAll("{{count}}", String(context.count))
         .replaceAll("{{app_url}}", appUrl)
-        .replace("{{report_content}}", tableHTML);
+        .replace("{{report_content}}", () => parts.join("\n"));
 }
 
 function downloadBlob(content, filename, type) {
@@ -1542,6 +1545,11 @@ async function exportReport(format = "html") {
                 count: context.count,
                 table: getTableExportData(context.table)
             };
+
+            for (const [key, selector] of [["nameservers", ".nameserver-overview"], ["whois", ".whois-overview"]]) {
+                const overview = document.querySelector(`#extraInfo ${selector} table`);
+                if (overview) payload[key] = getTableExportData(overview);
+            }
 
             downloadBlob(JSON.stringify(payload, null, 2), `${context.filenameBase}.json`, "application/json;charset=utf-8;");
             return;

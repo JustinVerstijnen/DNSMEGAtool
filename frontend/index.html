@@ -5,6 +5,7 @@
 <meta name="description" content="A simple and effective tool to scan a domain on its most important records, email security and deliverability.">
 <title>DNS MEGAtool - justinverstijnen.nl</title>
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="lookup-tables.css">
 <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.5.1/dist/confetti.browser.min.js"></script>
 <script defer src="https://cloud.umami.is/script.js" data-website-id="3ce7d7a4-539b-4d3c-981e-e96189fa5ac8"></script>
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-4082816808518335" crossorigin="anonymous"></script>
@@ -94,10 +95,19 @@
 
             <div id="extraInfo" style="margin-top: 20px;"></div>
             <template id="nameserverTemplate">
-                <div class="table-wrapper nameserver-overview">
+                <div class="table-wrapper lookup-overview nameserver-overview">
                     <table>
                         <caption><span>Nameservers</span><small></small></caption>
                         <thead><tr><th scope="col">#</th><th scope="col">Hostname</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </template>
+            <template id="whoisTemplate">
+                <div class="table-wrapper lookup-overview whois-overview">
+                    <table>
+                        <caption><span>WHOIS information</span><small></small></caption>
+                        <thead><tr><th scope="col">Field</th><th scope="col">Value</th></tr></thead>
                         <tbody></tbody>
                     </table>
                 </div>

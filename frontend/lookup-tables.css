@@ -1,0 +1,65 @@
+.lookup-overview {
+    overflow: hidden;
+    margin-top: 20px;
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    font-family: 'Segoe UI', sans-serif;
+    margin-bottom: 20px;
+}
+
+.lookup-overview caption {
+    padding: 14px 12px;
+    text-align: left;
+    font-size: 1.1em;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.lookup-overview caption small {
+    float: right;
+    margin-left: 12px;
+    color: #59636c;
+    font-size: .8em;
+    font-weight: 400;
+}
+
+.lookup-overview th {
+    color: #4b5563;
+    font-weight: 700;
+    text-align: left;
+}
+
+.nameserver-overview th:first-child {
+    width: 4em;
+}
+
+.lookup-overview, .lookup-overview * { box-sizing: border-box; }
+
+.lookup-overview table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.lookup-overview th, .lookup-overview td {
+    padding: 12px;
+    border: 0;
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+}
+
+.lookup-overview thead th { background: #f8f9fa; }
+.lookup-overview tbody td { border-top: 1px solid #e5e7eb; }
+.whois-overview th:first-child { width: 34%; }
+.whois-overview .whois-message { margin: 0; color: #374151; font-weight: 600; }
+
+@media print {
+    .lookup-overview { overflow: visible; box-shadow: none; }
+    .lookup-overview caption { break-after: avoid; }
+    .lookup-overview tr { break-inside: avoid; }
+    .lookup-overview thead { display: table-header-group; }
+    .lookup-overview th { print-color-adjust: exact; }
+}
