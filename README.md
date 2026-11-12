@@ -61,8 +61,6 @@ This tool is currently hosted on Azure Static Web Apps. This runs in the West Eu
 
 - Initial release after 18 months of testing and bugfixes
 
----
-
 ## Issues
 
 Its possible to submit any issues using the GitHub issues system.
