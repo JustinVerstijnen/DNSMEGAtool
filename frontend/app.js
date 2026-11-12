@@ -501,7 +501,7 @@ function showQuarantine(id, domains) {
     const notice = document.getElementById(id);
     notice.hidden = domains.length === 0;
     notice.textContent = domains.length
-        ? `Domain quarantine: ${domains.join(", ")}. Websites, email and other services may be interrupted.`
+        ? `Warning: ${domains.length === 1 ? "domain" : "domains"} ${domains.join(", ")} ${domains.length === 1 ? "reports" : "report"} to be in quarantine. Websites, Applications, Email traffic or other domain-related services may be interrupted.`
         : "";
 }
 
