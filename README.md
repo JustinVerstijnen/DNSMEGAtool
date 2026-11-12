@@ -59,7 +59,7 @@ This tool is currently hosted on Azure Static Web Apps. This runs in the West Eu
 
 ### Version 1.0.0
 
-- Initial release after 18 months of testing and bugfixes
+- Initial release after 18 months of designing, testing and bugfixes
 
 ## Issues
 
