@@ -54,6 +54,7 @@
 .lookup-overview thead th { background: #f8f9fa; }
 .lookup-overview tbody td { border-top: 1px solid #e5e7eb; }
 .lookup-overview thead[hidden] { display: none; }
+.whois-overview tbody td:first-child:not([colspan]) { font-weight: 700; }
 .whois-overview td[colspan="2"] {
     background-color: #E1F1FE;
     print-color-adjust: exact;
