@@ -30,8 +30,8 @@
     text-align: left;
 }
 
-.nameserver-overview th:first-child {
-    width: 4em;
+.lookup-overview col:first-child {
+    width: 34%;
 }
 
 .lookup-overview, .lookup-overview * { box-sizing: border-box; }
@@ -53,7 +53,11 @@
 
 .lookup-overview thead th { background: #f8f9fa; }
 .lookup-overview tbody td { border-top: 1px solid #e5e7eb; }
-.whois-overview th:first-child { width: 34%; }
+.lookup-overview thead[hidden] { display: none; }
+.whois-overview td[colspan="2"] {
+    background-color: #E1F1FE;
+    print-color-adjust: exact;
+}
 .whois-overview .whois-message { margin: 0; color: #374151; font-weight: 600; }
 
 @media print {

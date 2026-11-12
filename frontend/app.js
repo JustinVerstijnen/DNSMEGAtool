@@ -1096,7 +1096,9 @@ function createWhoisOverview(domain, whoisData) {
     }
     const body = view.querySelector("tbody");
     const message = createWhoisMessage(whoisData);
-    if (message) {
+    const standardConfirmation = whoisData.lookup_status === "found"
+        && whoisData.lookup_message === "The registry confirms this domain is registered.";
+    if (message && !standardConfirmation) {
         const cell = body.insertRow().insertCell();
         cell.colSpan = 2;
         cell.append(message);
