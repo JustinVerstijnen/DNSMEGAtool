@@ -57,13 +57,11 @@ This tool is currently hosted on Azure Static Web Apps. This runs in the West Eu
 
 ## Changelog/new features
 
-New features to this tool are added when needed or if the tool is broken.
+### Version 1.0.0
 
-Feature request can be done by submitting issues into GitHub.
+- Initial release after 18 months of testing and bugfixes
 
-- Advisories/warnings about current records
-- Tooltips per record
-- Research possibility of email header check with sending email/API
+---
 
 ## Issues
 
