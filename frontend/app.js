@@ -250,7 +250,7 @@ function hideBulkProgress() {
 }
 
 function isStandaloneLookupNotice(data) {
-    return ["available", "dns_refused", "dns_error"].includes(data?.WHOIS?.lookup_status);
+    return Boolean(data?.DNS_FAILURE) || ["available", "dns_refused", "dns_error"].includes(data?.WHOIS?.lookup_status);
 }
 
 function createMicrosoftTenantBox(tenantData, domain) {
@@ -487,12 +487,22 @@ function normalizeDomain(input) {
     d = d.split("/")[0].trim();
     // strip trailing dot
     d = d.replace(/\.$/, "");
+    if (/[^\x00-\x7F]/.test(d) && !/[\s@:%?#\\[\]]/.test(d)) {
+        try { return new URL("https://" + d).hostname; } catch { return d; }
+    }
     return d.toLowerCase();
 }
 
 function isValidDomain(domain) {
-    const domainPattern = /^(?!\-)([a-zA-Z0-9\-]{1,63}(?<!\-)\.)+[a-zA-Z]{2,}$/;
-    return domainPattern.test(domain);
+    return domain.length <= 253 && /^(?:(?!-)[a-z0-9-]{1,63}(?<!-)\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59}(?<!-))$/i.test(domain);
+}
+
+function showQuarantine(id, domains) {
+    const notice = document.getElementById(id);
+    notice.hidden = domains.length === 0;
+    notice.textContent = domains.length
+        ? `Domain quarantine: ${domains.join(", ")}. Websites, email and other services may be interrupted.`
+        : "";
 }
 
 async function checkDomain() {
@@ -531,6 +541,7 @@ async function checkDomain() {
     const extraInfo = document.getElementById("extraInfo");
     let showDetailsButton = false;
 
+    showQuarantine("singleQuarantine", []);
     // Reset views
     if (bulkResultsSection) bulkResultsSection.style.display = "none";
     resultsSection.style.display = "none";
@@ -546,6 +557,7 @@ async function checkDomain() {
         const response = await fetch(`/api/lookup?domain=${encodeURIComponent(domain)}`);
         if (!response.ok) throw new Error(`Lookup failed with status ${response.status}`);
         const data = await response.json();
+        showQuarantine("singleQuarantine", data.WHOIS?.quarantined ? [domain] : []);
         lastCheckedDomain = domain;
         const standaloneLookupNotice = isStandaloneLookupNotice(data);
         showDetailsButton = Boolean(lastCheckedDomain && !standaloneLookupNotice);
@@ -609,6 +621,11 @@ async function checkDomain() {
             extraInfo.appendChild(nsBox);
         }
 
+        if (data.DNS_FAILURE) {
+            const notice = createWhoisMessage({lookup_status: data.DNS_FAILURE.status,
+                lookup_message: data.DNS_FAILURE.message, technical_message: data.DNS_FAILURE.technical_message});
+            if (notice) extraInfo.appendChild(notice);
+        }
         // Extra info: WHOIS (API returns registrar/contact/date fields or error)
         if (data.WHOIS) {
             const whoisBox = document.createElement("div");
@@ -1175,6 +1192,8 @@ async function runBulkLookup() {
     if (bulkResultsSection) bulkResultsSection.style.display = "block";
     loader.style.display = "none";
 
+    const quarantinedDomains = [];
+    showQuarantine("bulkQuarantine", quarantinedDomains);
     // Reset bulk table
     if (bulkTbody) bulkTbody.innerHTML = "";
     setBulkProgress(0, uniqueDomains.length);
@@ -1193,6 +1212,10 @@ async function runBulkLookup() {
                 data = null;
             }
 
+            if (data?.WHOIS?.quarantined) {
+                quarantinedDomains.push(domain);
+                showQuarantine("bulkQuarantine", quarantinedDomains);
+            }
             const bulkExportRow = serializeBulkLookupForJsonExport(domain, data);
             if (!data) {
                 bulkExportRow.error = "Lookup failed";

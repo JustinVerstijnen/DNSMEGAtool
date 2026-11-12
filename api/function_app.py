@@ -13,12 +13,11 @@ import smtplib
 import socket
 import ssl
 import re
-import html
+import time
+import idna
 import os
 import ipaddress
 import uuid
-import contextlib
-import io
 from datetime import datetime, timezone
 
 # Function settings
@@ -425,10 +424,8 @@ def build_dns_failure_lookup_payload(domain, failure):
     message = failure.get("message")
     technical_message = failure.get("technical_message") or message
     advisory = dns_unavailable_advisory(status)
-    whois = empty_whois_payload(domain, status, message)
-    whois["technical_message"] = technical_message
-
     return {
+        "DNS_FAILURE": {**failure, "technical_message": technical_message},
         "MX": make_record(False, message, [advisory], level="error"),
         "SPF": make_record(False, message, [advisory], level="error"),
         "DKIM": make_record(False, message, [advisory], level="error"),
@@ -438,7 +435,7 @@ def build_dns_failure_lookup_payload(domain, failure):
         "DANE": make_record(False, "No MX host available for DANE check", [advisory], level="error"),
         "MTA-STS": make_record(False, message, [advisory], level="warning"),
         "NS": [],
-        "WHOIS": whois,
+        "WHOIS": lookup_registration(domain),
     }
 
 def txt_record_values(records):
@@ -822,44 +819,22 @@ WHOIS_FIELDS = [
     "status",
 ]
 
-def normalize_domain_availability_message(domain, message):
-    text = str(message or "").strip()
-    if not text:
+def normalize_lookup_domain(value):
+    try:
+        domain = idna.encode(value.strip(), uts46=True, std3_rules=True).decode().removesuffix(".")
+    except (UnicodeError, ValueError):
         return None
-    if re.search(r"\b(is free|available for registration|not found)\b", text, re.IGNORECASE):
-        return "This domain is free and available for registration."
-    return text
+    labels = domain.split(".")
+    if len(labels) < 2 or not re.fullmatch(r"[a-z]{2,63}|xn--[a-z0-9-]+", labels[-1]):
+        return None
+    return domain
 
 def empty_whois_payload(domain, lookup_status="no_public_details", lookup_message=None):
     payload = {field: None for field in WHOIS_FIELDS}
     payload["domain_name"] = domain
     payload["lookup_status"] = lookup_status
     payload["lookup_message"] = lookup_message or "No public WHOIS details found."
-    if lookup_status == "available":
-        payload["status"] = "Available for registration"
     return payload
-
-def has_public_whois_details(payload):
-    return any(payload.get(field) for field in WHOIS_FIELDS if field != "domain_name")
-
-def get_rdap_availability_message(domain):
-    try:
-        response = requests.get(
-            f"https://rdap.org/domain/{domain}",
-            headers={"Accept": "application/rdap+json, application/json", "User-Agent": "DNSMegaTool/1.0"},
-            timeout=6
-        )
-        if response.status_code != 404:
-            return None
-        try:
-            rdap_data = response.json()
-            description = " ".join(rdap_data.get("description", []))
-            message = description or rdap_data.get("title")
-        except Exception:
-            message = response.text
-        return normalize_domain_availability_message(domain, message)
-    except Exception:
-        return None
 
 def build_whois_payload(domain, whois_data, administrative_contacts):
     payload = {
@@ -884,19 +859,7 @@ def build_whois_payload(domain, whois_data, administrative_contacts):
         "lookup_message": None,
     }
 
-    if has_public_whois_details(payload):
-        return payload
-
-    availability_message = get_rdap_availability_message(domain)
-    if availability_message:
-        return empty_whois_payload(domain, "available", availability_message)
-
-    return empty_whois_payload(domain)
-
-def lookup_whois_data(domain):
-    stream = io.StringIO()
-    with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream):
-        return whois.whois(domain)
+    return payload
 
 def get_vcard_value(vcard_entries, key):
     values = []
@@ -907,19 +870,8 @@ def get_vcard_value(vcard_entries, key):
         return None
     return values if len(values) > 1 else values[0]
 
-def get_rdap_administrative_contacts(domain):
+def get_rdap_administrative_contacts(rdap_data):
     contacts = []
-    try:
-        response = requests.get(
-            f"https://rdap.org/domain/{domain}",
-            headers={"Accept": "application/rdap+json, application/json", "User-Agent": "DNSMegaTool/1.0"},
-            timeout=6
-        )
-        response.raise_for_status()
-        rdap_data = response.json()
-    except Exception:
-        rdap_data = {}
-
     for entity in rdap_data.get("entities", []):
         roles = [role.lower() for role in entity.get("roles", [])]
         if "administrative" not in roles:
@@ -939,27 +891,119 @@ def get_rdap_administrative_contacts(domain):
         if clean_contact:
             contacts.append(clean_contact)
 
-    if contacts:
-        return contacts
+    return contacts or None
 
-    try:
-        page = requests.get(f"https://who.is/rdap/{domain}", timeout=6).text
-        normalized = page.replace("<!-- -->", "")
-        match = re.search(r"Administrative\s*Contact</h3>(.*?)(?:<h3|</div></div></div>)", normalized, re.IGNORECASE | re.DOTALL)
-        if not match:
-            return None
-        section = match.group(1)
-        pairs = re.findall(r"<dt[^>]*>(.*?)</dt>\s*<dd[^>]*>(.*?)</dd>", section, re.IGNORECASE | re.DOTALL)
-        contact = {}
-        for label, value in pairs:
-            clean_label = re.sub(r"<.*?>", "", label).strip().lower().replace(" ", "_")
-            clean_value = html.unescape(re.sub(r"<.*?>", "", value)).strip()
-            clean_value = clean_value.replace(" [at] ", "@").replace(" [dot] ", ".")
-            if clean_label and clean_value:
-                contact[clean_label] = clean_value
-        return [contact] if contact else None
-    except Exception:
+
+_rdap_services = {}
+_rdap_refresh_at = 0
+
+
+def registry_urls(tld):
+    global _rdap_services, _rdap_refresh_at
+    if time.monotonic() >= _rdap_refresh_at:
+        try:
+            response = requests.get("https://data.iana.org/rdap/dns.json", timeout=5)
+            response.raise_for_status()
+            services = response.json()["services"]
+            _rdap_services = {label: urls for labels, urls in services for label in labels}
+            _rdap_refresh_at = time.monotonic() + 86400
+        except (requests.RequestException, ValueError, KeyError, TypeError):
+            _rdap_refresh_at = time.monotonic() + 30
+    return sorted(_rdap_services.get(tld, []), key=lambda url: not url.startswith("https://"))
+
+
+def is_quarantined(status):
+    values = status if isinstance(status, list) else [status]
+    for value in values:
+        # WHOIS often appends an ICANN status link, or a release date in parentheses.
+        label = re.split(r"\s+(?:https?://|\()", str(value), maxsplit=1)[0]
+        if re.sub(r"[\s_-]", "", label.lower()) in {
+            "redemptionperiod", "quarantine", "inquarantine", "quarantined", "quarantaine", "inquarantaine"
+        }:
+            return True
+    return False
+
+
+def rdap_payload(domain, data):
+    payload = empty_whois_payload(domain, "found", "The registry confirms this domain is registered.")
+    payload["status"] = data.get("status")
+    payload["quarantined"] = is_quarantined(payload["status"])
+    payload["administrative_contact"] = get_rdap_administrative_contacts(data)
+    date_fields = {"registration": "creation_date", "last changed": "updated_date", "expiration": "expiration_date"}
+    for event in data.get("events", []):
+        field = date_fields.get(event.get("eventAction"))
+        if field:
+            payload[field] = event.get("eventDate")
+    for entity in data.get("entities", []):
+        card = entity.get("vcardArray") or [None, []]
+        roles = entity.get("roles", [])
+        if "registrar" in roles:
+            payload["registrar"] = get_vcard_value(card[1], "fn") or entity.get("handle")
+        if "registrant" in roles:
+            for field, key in (("name", "fn"), ("organization", "org"), ("emails", "email"), ("phone", "tel")):
+                payload[field] = get_vcard_value(card[1], key)
+            address = get_vcard_value(card[1], "adr")
+            if isinstance(address, list) and len(address) == 7:
+                for field, value in zip(("address", "city", "state", "zipcode", "country"), address[2:]):
+                    payload[field] = value
+    return payload
+
+
+def query_whois(server, name):
+    with socket.create_connection((server, 43), timeout=4) as sock:
+        sock.sendall((name + "\r\n").encode("ascii"))
+        with sock.makefile("rb") as stream:
+            return stream.read(262144).decode("utf-8", errors="replace")
+
+
+def registry_whois(domain):
+    tld = domain.rsplit(".", 1)[1]
+    referral = query_whois("whois.iana.org", tld)
+    match = re.search(r"^whois:[ \t]*([\w.-]+)[ \t]*$", referral.replace("\r", ""), re.I | re.M)
+    if not match:
         return None
+    server = match.group(1)
+    raw = query_whois(server, domain)
+    lines = [line.strip() for line in raw.splitlines()]
+    if any(line.lower() == f"{domain} is free" for line in lines):
+        return empty_whois_payload(domain, "available", "The registry reports this domain is free.")
+    named = any(re.fullmatch(r"(?:domain(?: name)?\s*:\s*)?" + re.escape(domain), line, re.I) for line in lines)
+    if not named:
+        return None
+    status = [m[1] for line in lines if (m := re.fullmatch(r"(?:domain )?status:\s*(.+)", line, re.I))]
+    payload = empty_whois_payload(domain, "found", "The registry confirms this domain is registered.")
+    try:
+        parsed = whois.parser.WhoisEntry.load(domain, raw)
+        payload.update(build_whois_payload(domain, parsed, None))
+    except Exception:
+        pass  # Registry formats vary. The exact domain field still confirms the match.
+    payload["whois_server"] = server
+    payload["status"] = payload["status"] or status
+    payload["quarantined"] = is_quarantined(status) or is_quarantined(payload["status"])
+    return payload
+
+
+def lookup_registration(domain):
+    for base in registry_urls(domain.rsplit(".", 1)[1]):
+        try:
+            response = requests.get(base.rstrip("/") + "/domain/" + domain, timeout=5,
+                                    headers={"Accept": "application/rdap+json, application/json"})
+            data = response.json()
+            if response.status_code == 404 and data.get("errorCode") == 404:
+                return empty_whois_payload(domain, "not_found", "The registry returned no registration for this exact name. Registration eligibility is determined by the registry.")
+            if response.status_code == 200 and data.get("objectClassName") == "domain":
+                name = data.get("ldhName") or data.get("unicodeName") or ""
+                if normalize_lookup_domain(name) == domain:
+                    return rdap_payload(domain, data)
+        except (requests.RequestException, ValueError, AttributeError, IndexError, KeyError, TypeError):
+            continue
+    try:
+        payload = registry_whois(domain)
+        if payload:
+            return payload
+    except OSError:
+        pass
+    return empty_whois_payload(domain, "lookup_error", "Registration status unknown. No conclusive public registry response was available.")
 
 def make_certificate_check(status, level, line, advisories=None, days_left=None, expires_at=None):
     return {
@@ -1198,8 +1242,8 @@ def domain_details(req: func.HttpRequest) -> func.HttpResponse:
     if not domain:
         return func.HttpResponse("Please pass a domain on the query string", status_code=400)
 
-    domain = clean_dns_name(domain.strip().lower())
-    if not re.match(r"^(?!-)([a-z0-9-]{1,63}(?<!-)\.)+[a-z]{2,}$", domain):
+    domain = normalize_lookup_domain(domain)
+    if not domain:
         return func.HttpResponse("Please pass a valid domain", status_code=400)
 
     dns_failure = get_domain_dns_resolution_failure(domain)
@@ -1233,8 +1277,8 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
     if not domain:
         return func.HttpResponse("Please pass a domain on the query string", status_code=400)
 
-    domain = clean_dns_name(domain.strip().lower())
-    if not re.match(r"^(?!-)([a-z0-9-]{1,63}(?<!-)\.)+[a-z]{2,}$", domain):
+    domain = normalize_lookup_domain(domain)
+    if not domain:
         return func.HttpResponse("Please pass a valid domain", status_code=400)
 
     dns_failure = get_domain_dns_resolution_failure(domain)
@@ -1642,16 +1686,6 @@ def dns_lookup(req: func.HttpRequest) -> func.HttpResponse:
     except:
         results['NS'] = []
 
-    # WHOIS lookup
-    try:
-        whois_data = lookup_whois_data(domain)
-        administrative_contacts = get_rdap_administrative_contacts(domain)
-        results['WHOIS'] = build_whois_payload(domain, whois_data, administrative_contacts)
-    except Exception as e:
-        availability_message = normalize_domain_availability_message(domain, str(e))
-        if availability_message:
-            results['WHOIS'] = empty_whois_payload(domain, "available", availability_message)
-        else:
-            results['WHOIS'] = empty_whois_payload(domain, "lookup_error", f"WHOIS lookup failed: {str(e)}")
+    results["WHOIS"] = lookup_registration(domain)
 
     return func.HttpResponse(json.dumps(results), mimetype="application/json")
