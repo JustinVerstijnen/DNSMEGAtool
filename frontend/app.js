@@ -500,9 +500,29 @@ function isValidDomain(domain) {
 function showQuarantine(id, domains) {
     const notice = document.getElementById(id);
     notice.hidden = domains.length === 0;
-    notice.textContent = domains.length
-        ? `Warning: ${domains.length === 1 ? "domain" : "domains"} ${domains.join(", ")} ${domains.length === 1 ? "reports" : "report"} to be in quarantine. Websites, Applications, Email traffic or other domain-related services may be interrupted.`
-        : "";
+    notice.replaceChildren();
+    if (notice.hidden) return;
+    const prefix = document.createElement("strong");
+    prefix.textContent = "Warning:";
+    notice.append(prefix, ` ${domains.length === 1 ? "domain" : "domains"} ${domains.join(", ")} ${domains.length === 1 ? "reports" : "report"} to be in quarantine. Websites, Applications, Email traffic or other domain-related services may be interrupted.`);
+}
+
+function createNameserverOverview(domain, servers) {
+    const view = document.getElementById("nameserverTemplate").content.cloneNode(true);
+    view.querySelector("caption small").textContent =
+        `${domain} · ${servers.length} ${servers.length === 1 ? "record" : "records"}`;
+    const body = view.querySelector("tbody");
+    servers.forEach((server, index) => {
+        const row = body.insertRow();
+        row.insertCell().textContent = index + 1;
+        row.insertCell().textContent = server;
+    });
+    if (!servers.length) {
+        const cell = body.insertRow().insertCell();
+        cell.colSpan = 2;
+        cell.textContent = "No nameservers found.";
+    }
+    return view;
 }
 
 async function checkDomain() {
@@ -613,12 +633,8 @@ async function checkDomain() {
         }
 
         // Extra info: Nameservers (API returns an array)
-        if (!standaloneLookupNotice && data.NS) {
-            const nsBox = document.createElement("div");
-            nsBox.className = "infobox";
-            const listItems = Array.isArray(data.NS) ? data.NS.map((ns) => `<li>${ns}</li>`).join("") : "";
-            nsBox.innerHTML = `<h3>Nameservers for ${domain}:</h3><ul>${listItems}</ul>`;
-            extraInfo.appendChild(nsBox);
+        if (!standaloneLookupNotice && Array.isArray(data.NS)) {
+            extraInfo.appendChild(createNameserverOverview(domain, data.NS));
         }
 
         if (data.DNS_FAILURE) {

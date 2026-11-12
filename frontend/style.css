@@ -270,6 +270,46 @@ button svg {
     overflow-y: clip;
 }
 
+.nameserver-overview {
+    overflow: hidden;
+    margin-bottom: 20px;
+}
+
+.nameserver-overview caption {
+    padding: 14px 12px;
+    text-align: left;
+    font-size: 1.1em;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.nameserver-overview caption small {
+    float: right;
+    margin-left: 12px;
+    color: #59636c;
+    font-size: .8em;
+    font-weight: 400;
+}
+
+.nameserver-overview th {
+    color: #4b5563;
+    font-weight: 700;
+    text-align: left;
+}
+
+.nameserver-overview th:first-child {
+    width: 4em;
+}
+
+.nameserver-overview td {
+    border-top: 1px solid #e5e7eb;
+    overflow-wrap: anywhere;
+}
+
+.nameserver-overview td:nth-child(2) {
+    font-family: Consolas, monospace;
+}
+
 .progress-text {
     width: min(50%, 420px);
     min-width: 280px;
